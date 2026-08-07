@@ -1,0 +1,29 @@
+# ML Experiment Tracker Configuration
+
+[app]
+name = "ML Experiment Tracker"
+version = "0.1.0"
+debug = true
+
+[api]
+host = "0.0.0.0"
+port = 8000
+prefix = "/api/v1"
+cors_origins = ["*"]
+
+[database]
+type = "local"  # local, s3, postgres
+local_path = "./mlruns"
+
+[storage]
+type = "local"  # local, s3, gcs
+local_path = "./mlruns"
+
+[ui]
+host = "0.0.0.0"
+port = 8501
+theme = "light"
+
+[logging]
+level = "INFO"
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

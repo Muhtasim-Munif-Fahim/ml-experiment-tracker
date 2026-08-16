@@ -45,6 +45,7 @@ class Artifact:
     artifact_type: ArtifactType
     path: str
     size_bytes: int
+    checksum_sha256: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -54,6 +55,7 @@ class Artifact:
             "type": self.artifact_type.value,
             "path": self.path,
             "size_bytes": self.size_bytes,
+            "checksum_sha256": self.checksum_sha256,
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
         }

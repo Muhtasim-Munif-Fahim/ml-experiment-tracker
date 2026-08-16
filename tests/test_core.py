@@ -89,6 +89,12 @@ def test_artifact_handling():
         saved_path = storage.save_artifact("model_1", model_path)
         loaded = storage.load_artifact(saved_path)
         assert loaded == b"test data"
+        checksum = storage.artifact_checksum(saved_path)
+        assert checksum == "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9"
+        assert storage.verify_artifact(saved_path, checksum)
+
+        Path(saved_path).write_bytes(b"tampered")
+        assert not storage.verify_artifact(saved_path, checksum)
 
 
 def test_experiment_bundle_round_trip():
@@ -179,10 +185,17 @@ def test_run_lineage_rejects_missing_parent():
 
 
 def test_artifact_serialization():
-    artifact = Artifact(name="model", artifact_type=ArtifactType.MODEL, path="/tmp/model.pkl", size_bytes=10)
+    artifact = Artifact(
+        name="model",
+        artifact_type=ArtifactType.MODEL,
+        path="/tmp/model.pkl",
+        size_bytes=10,
+        checksum_sha256="a" * 64,
+    )
     data = artifact.to_dict()
     assert data["type"] == "model"
     assert data["size_bytes"] == 10
+    assert data["checksum_sha256"] == "a" * 64
 
 
 if __name__ == "__main__":

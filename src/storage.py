@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import json
+import hashlib
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, BinaryIO, List, Optional
@@ -123,6 +124,25 @@ class LocalStorageBackend:
     def load_artifact(self, artifact_path: str) -> bytes:
         with open(artifact_path, "rb") as f:
             return f.read()
+
+    def artifact_checksum(self, artifact_path: str) -> str:
+        """Return the SHA-256 checksum of a stored artifact."""
+
+        digest = hashlib.sha256()
+        with open(artifact_path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def verify_artifact(self, artifact_path: str, expected_sha256: str) -> bool:
+        """Verify artifact bytes against a previously recorded checksum."""
+
+        normalized = expected_sha256.strip().lower()
+        if len(normalized) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("expected_sha256 must be a 64-character hex digest")
+        return self.artifact_checksum(artifact_path) == normalized
 
     def export_experiment(self, exp_id: str, destination: Path) -> Path:
         """Export experiment metadata and all run records as one JSON bundle."""

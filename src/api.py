@@ -178,11 +178,16 @@ def upload_artifact(run_id: str, name: str = Form(...), artifact_type: str = For
         artifact_type=ArtifactType(artifact_type),
         path=artifact_path,
         size_bytes=len(content),
+        checksum_sha256=storage.artifact_checksum(artifact_path),
         metadata=json.loads(metadata)
     )
     run_data.setdefault("artifacts", []).append(artifact.to_dict())
     storage.save_run(run_data)
-    return {"artifact_id": artifact_id, "path": artifact_path}
+    return {
+        "artifact_id": artifact_id,
+        "path": artifact_path,
+        "checksum_sha256": artifact.checksum_sha256,
+    }
 
 
 @app.get("/runs/{run_id}/artifacts/", response_model=List[dict])

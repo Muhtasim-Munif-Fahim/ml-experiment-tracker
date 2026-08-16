@@ -91,6 +91,39 @@ def test_artifact_handling():
         assert loaded == b"test data"
 
 
+def test_experiment_bundle_round_trip():
+    with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as target_dir:
+        source = LocalStorageBackend(source_dir)
+        experiment = Experiment(name="portable")
+        run = Run(experiment_id=experiment.id, name="baseline", params={"seed": 7})
+        run.log_metric("accuracy", 0.91, step=1)
+        run.finish()
+        source.save_experiment(experiment.to_dict())
+        source.save_run(run.to_dict())
+
+        bundle = Path(source_dir) / "exports" / "experiment.json"
+        source.export_experiment(experiment.id, bundle)
+
+        target = LocalStorageBackend(target_dir)
+        imported_id = target.import_experiment(bundle)
+        assert imported_id == experiment.id
+        assert target.load_experiment(imported_id)["name"] == "portable"
+        imported_runs = target.list_runs(imported_id)
+        assert imported_runs[0]["params"] == {"seed": 7}
+        assert imported_runs[0]["metrics"][0]["value"] == 0.91
+
+
+def test_experiment_bundle_refuses_to_overwrite():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        experiment = Experiment(name="existing")
+        storage.save_experiment(experiment.to_dict())
+        bundle = Path(tmpdir) / "experiment.json"
+        storage.export_experiment(experiment.id, bundle)
+        with pytest.raises(FileExistsError, match="already exists"):
+            storage.import_experiment(bundle)
+
+
 def test_get_best_run():
     exp = Experiment(name="test")
     run_a = Run(experiment_id=exp.id, name="a")

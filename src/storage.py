@@ -11,6 +11,8 @@ from typing import Any, BinaryIO, List, Optional
 
 from .models import Run, Experiment, Artifact
 
+EXPERIMENT_BUNDLE_VERSION = 1
+
 
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
@@ -121,6 +123,61 @@ class LocalStorageBackend:
     def load_artifact(self, artifact_path: str) -> bytes:
         with open(artifact_path, "rb") as f:
             return f.read()
+
+    def export_experiment(self, exp_id: str, destination: Path) -> Path:
+        """Export experiment metadata and all run records as one JSON bundle."""
+
+        experiment = self.load_experiment(exp_id)
+        if experiment is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        payload = {
+            "schema_version": EXPERIMENT_BUNDLE_VERSION,
+            "experiment": experiment,
+            "runs": self.list_runs(exp_id),
+        }
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",
+            encoding="utf-8",
+        )
+        return target
+
+    def import_experiment(self, source: Path) -> str:
+        """Import a bundle while refusing to overwrite existing records."""
+
+        path = Path(source)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read experiment bundle '{path}': {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("experiment bundle must contain a JSON object")
+        if payload.get("schema_version") != EXPERIMENT_BUNDLE_VERSION:
+            raise ValueError(
+                "unsupported experiment bundle version: "
+                f"{payload.get('schema_version')!r}"
+            )
+        experiment = payload.get("experiment")
+        runs = payload.get("runs")
+        if not isinstance(experiment, dict) or not experiment.get("id"):
+            raise ValueError("experiment bundle is missing experiment.id")
+        if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+            raise ValueError("experiment bundle runs must be a list of objects")
+
+        exp_id = str(experiment["id"])
+        if self.load_experiment(exp_id) is not None:
+            raise FileExistsError(f"experiment already exists: {exp_id}")
+        for run in runs:
+            if run.get("experiment_id") != exp_id or not run.get("id"):
+                raise ValueError("every bundled run must belong to experiment.id")
+            if self.load_run(str(run["id"])) is not None:
+                raise FileExistsError(f"run already exists: {run['id']}")
+
+        self.save_experiment(experiment)
+        for run in runs:
+            self.save_run(run)
+        return exp_id
 
 
 class S3StorageBackend:

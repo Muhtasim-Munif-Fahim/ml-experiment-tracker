@@ -157,6 +157,27 @@ def test_metric_table_ranks_completed_runs_and_includes_params():
     assert table[0]["params"] == {"seed": 42}
 
 
+def test_run_lineage_round_trips_and_orders_ancestors():
+    exp = Experiment(name="lineage")
+    root = Run(experiment_id=exp.id, name="baseline")
+    child = Run(experiment_id=exp.id, name="tuned", parent_run_id=root.id)
+    exp.add_run(root)
+    exp.add_run(child)
+
+    lineage = exp.run_lineage(child.id)
+    assert [run.name for run in lineage] == ["baseline", "tuned"]
+    restored = Experiment.from_dict(exp.to_dict())
+    assert restored.runs[1].parent_run_id == root.id
+
+
+def test_run_lineage_rejects_missing_parent():
+    exp = Experiment(name="lineage")
+    orphan = Run(experiment_id=exp.id, name="orphan", parent_run_id="missing")
+    exp.add_run(orphan)
+    with pytest.raises(ValueError, match="missing parent"):
+        exp.run_lineage(orphan.id)
+
+
 def test_artifact_serialization():
     artifact = Artifact(name="model", artifact_type=ArtifactType.MODEL, path="/tmp/model.pkl", size_bytes=10)
     data = artifact.to_dict()

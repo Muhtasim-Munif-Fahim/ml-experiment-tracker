@@ -63,6 +63,7 @@ class Artifact:
 class Run:
     experiment_id: str
     name: str
+    parent_run_id: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     status: RunStatus = RunStatus.RUNNING
     params: Dict[str, Any] = field(default_factory=dict)
@@ -113,6 +114,7 @@ class Run:
             "id": self.id,
             "experiment_id": self.experiment_id,
             "name": self.name,
+            "parent_run_id": self.parent_run_id,
             "status": self.status.value,
             "params": self.params,
             "metrics": [{"name": m.name, "value": m.value, "step": m.step, "timestamp": m.timestamp.isoformat()} for m in self.metrics],
@@ -130,6 +132,7 @@ class Run:
             id=data["id"],
             experiment_id=data["experiment_id"],
             name=data["name"],
+            parent_run_id=data.get("parent_run_id"),
             status=RunStatus(data["status"]),
             params=data.get("params", {}),
             tags=data.get("tags", {}),
@@ -194,6 +197,29 @@ class Experiment:
                 }
             )
         return sorted(rows, key=lambda row: row["value"], reverse=maximize)
+
+    def run_lineage(self, run_id: str) -> List[Run]:
+        """Return a run's ancestry from the root run through ``run_id``."""
+
+        by_id = {run.id: run for run in self.runs}
+        if run_id not in by_id:
+            raise KeyError(f"run not found in experiment: {run_id}")
+        lineage: List[Run] = []
+        seen = set()
+        current: Optional[Run] = by_id[run_id]
+        while current is not None:
+            if current.id in seen:
+                raise ValueError("run lineage contains a cycle")
+            seen.add(current.id)
+            lineage.append(current)
+            if current.parent_run_id is None:
+                break
+            if current.parent_run_id not in by_id:
+                raise ValueError(
+                    f"run lineage references missing parent: {current.parent_run_id}"
+                )
+            current = by_id[current.parent_run_id]
+        return list(reversed(lineage))
 
     def to_dict(self) -> dict:
         return {

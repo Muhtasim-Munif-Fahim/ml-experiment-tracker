@@ -42,6 +42,26 @@ def test_run_log_metric():
     assert run.metrics[0].step == 1
 
 
+def test_metric_summary_preserves_history_and_steps():
+    run = Run(experiment_id="test", name="test")
+    run.log_metric("accuracy", 0.7, step=1)
+    run.log_metric("loss", 0.5, step=1)
+    run.log_metric("accuracy", 0.9, step=2)
+
+    summary = run.metric_summary("accuracy")
+    assert summary == {
+        "name": "accuracy",
+        "count": 2,
+        "min": 0.7,
+        "max": 0.9,
+        "mean": 0.8,
+        "last": 0.9,
+        "last_step": 2,
+        "best_step": 2,
+    }
+    assert run.metric_summary("missing") is None
+
+
 def test_storage_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalStorageBackend(tmpdir)
@@ -84,6 +104,24 @@ def test_get_best_run():
 
     assert exp.get_best_run("accuracy").id == run_b.id
     assert exp.get_best_run("loss", maximize=False) is None
+
+
+def test_metric_table_ranks_completed_runs_and_includes_params():
+    exp = Experiment(name="test")
+    for name, score, status in (
+        ("baseline", 0.8, RunStatus.COMPLETED),
+        ("candidate", 0.9, RunStatus.COMPLETED),
+        ("unfinished", 0.99, RunStatus.RUNNING),
+    ):
+        run = Run(experiment_id=exp.id, name=name, params={"seed": 42})
+        run.log_metric("accuracy", score)
+        if status == RunStatus.COMPLETED:
+            run.finish(status)
+        exp.add_run(run)
+
+    table = exp.metric_table("accuracy")
+    assert [row["run_name"] for row in table] == ["candidate", "baseline"]
+    assert table[0]["params"] == {"seed": 42}
 
 
 def test_artifact_serialization():

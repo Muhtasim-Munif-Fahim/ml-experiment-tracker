@@ -80,6 +80,25 @@ class Run:
     def log_metric(self, name: str, value: float, step: Optional[int] = None) -> None:
         self.metrics.append(Metric(name=name, value=value, step=step))
 
+    def metric_summary(self, name: str) -> Optional[Dict[str, Any]]:
+        """Summarize the recorded history for one metric."""
+
+        matching = [metric for metric in self.metrics if metric.name == name]
+        if not matching:
+            return None
+        values = [metric.value for metric in matching]
+        best = max(matching, key=lambda metric: metric.value)
+        return {
+            "name": name,
+            "count": len(values),
+            "min": min(values),
+            "max": max(values),
+            "mean": sum(values) / len(values),
+            "last": matching[-1].value,
+            "last_step": matching[-1].step,
+            "best_step": best.step,
+        }
+
     def log_artifact(self, artifact: Artifact) -> None:
         self.artifacts.append(artifact)
 
@@ -153,6 +172,28 @@ class Experiment:
                 best = r
                 best_value = value
         return best
+
+    def metric_table(self, metric: str, maximize: bool = True) -> List[Dict[str, Any]]:
+        """Return completed runs ranked by their best value for ``metric``."""
+
+        rows = []
+        for run in self.runs:
+            if run.status != RunStatus.COMPLETED:
+                continue
+            summary = run.metric_summary(metric)
+            if summary is None:
+                continue
+            rows.append(
+                {
+                    "run_id": run.id,
+                    "run_name": run.name,
+                    "value": summary["max"] if maximize else summary["min"],
+                    "last": summary["last"],
+                    "count": summary["count"],
+                    "params": dict(run.params),
+                }
+            )
+        return sorted(rows, key=lambda row: row["value"], reverse=maximize)
 
     def to_dict(self) -> dict:
         return {

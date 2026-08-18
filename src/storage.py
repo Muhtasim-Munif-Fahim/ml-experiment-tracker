@@ -115,6 +115,37 @@ class LocalStorageBackend:
                     runs.append(data)
         return runs
 
+    def query_runs(
+        self,
+        experiment_id: str,
+        *,
+        statuses: Optional[List[str]] = None,
+        tags: Optional[dict[str, str]] = None,
+        name_contains: Optional[str] = None,
+    ) -> List[dict]:
+        """Filter stored runs by status, exact tags, and a name fragment."""
+
+        allowed_statuses = set(statuses or [])
+        required_tags = tags or {}
+        fragment = name_contains.casefold() if name_contains else None
+        matches = []
+        for run in self.list_runs(experiment_id):
+            if allowed_statuses and run.get("status") not in allowed_statuses:
+                continue
+            run_tags = run.get("tags", {})
+            if not isinstance(run_tags, dict) or any(
+                run_tags.get(key) != value for key, value in required_tags.items()
+            ):
+                continue
+            if fragment and fragment not in str(run.get("name", "")).casefold():
+                continue
+            matches.append(run)
+        return sorted(
+            matches,
+            key=lambda run: str(run.get("created_at", "")),
+            reverse=True,
+        )
+
     def save_artifact(self, artifact_id: str, file_path: Path) -> str:
         dest = self.artifacts_dir / artifact_id
         dest.parent.mkdir(parents=True, exist_ok=True)

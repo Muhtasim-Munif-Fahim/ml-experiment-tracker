@@ -130,6 +130,46 @@ def test_experiment_bundle_refuses_to_overwrite():
             storage.import_experiment(bundle)
 
 
+def test_query_runs_combines_status_tags_and_name_filters():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        experiment = Experiment(name="searchable")
+        completed = Run(
+            experiment_id=experiment.id,
+            name="ResNet tuned",
+            tags={"dataset": "cifar10", "stage": "candidate"},
+        )
+        completed.finish()
+        running = Run(
+            experiment_id=experiment.id,
+            name="ResNet exploratory",
+            tags={"dataset": "cifar10", "stage": "draft"},
+        )
+        other = Run(
+            experiment_id=experiment.id,
+            name="Transformer tuned",
+            tags={"dataset": "text", "stage": "candidate"},
+        )
+        for run in (completed, running, other):
+            storage.save_run(run.to_dict())
+
+        matches = storage.query_runs(
+            experiment.id,
+            statuses=["completed"],
+            tags={"dataset": "cifar10"},
+            name_contains="resnet",
+        )
+        assert [run["id"] for run in matches] == [completed.id]
+
+
+def test_query_runs_requires_all_requested_tags():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        run = Run(experiment_id="exp", name="candidate", tags={"dataset": "tabular"})
+        storage.save_run(run.to_dict())
+        assert storage.query_runs("exp", tags={"dataset": "tabular", "stage": "prod"}) == []
+
+
 def test_get_best_run():
     exp = Experiment(name="test")
     run_a = Run(experiment_id=exp.id, name="a")

@@ -184,6 +184,33 @@ def test_run_lineage_rejects_missing_parent():
         exp.run_lineage(orphan.id)
 
 
+def test_compare_runs_reports_metric_deltas_and_changed_params():
+    exp = Experiment(name="comparison")
+    baseline = Run(experiment_id=exp.id, name="baseline", params={"lr": 0.1, "seed": 7})
+    baseline.log_metric("accuracy", 0.80, step=1)
+    baseline.log_metric("accuracy", 0.82, step=2)
+    candidate = Run(experiment_id=exp.id, name="candidate", params={"lr": 0.05, "seed": 7})
+    candidate.log_metric("accuracy", 0.87, step=2)
+    candidate.log_metric("f1", 0.84, step=2)
+    exp.add_run(baseline)
+    exp.add_run(candidate)
+
+    comparison = exp.compare_runs(baseline.id, candidate.id)
+    assert comparison["metric_changes"]["accuracy"]["delta"] == pytest.approx(0.05)
+    assert comparison["metric_changes"]["f1"]["baseline"] is None
+    assert comparison["parameter_changes"] == {
+        "lr": {"baseline": 0.1, "candidate": 0.05}
+    }
+
+
+def test_compare_runs_rejects_unknown_ids():
+    exp = Experiment(name="comparison")
+    run = Run(experiment_id=exp.id, name="baseline")
+    exp.add_run(run)
+    with pytest.raises(KeyError, match="missing"):
+        exp.compare_runs(run.id, "missing")
+
+
 def test_artifact_serialization():
     artifact = Artifact(
         name="model",

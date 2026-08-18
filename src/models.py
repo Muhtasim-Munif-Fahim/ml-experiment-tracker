@@ -223,6 +223,53 @@ class Experiment:
             current = by_id[current.parent_run_id]
         return list(reversed(lineage))
 
+    def compare_runs(self, baseline_id: str, candidate_id: str) -> Dict[str, Any]:
+        """Compare parameters and latest metric values between two runs."""
+
+        by_id = {run.id: run for run in self.runs}
+        missing = [run_id for run_id in (baseline_id, candidate_id) if run_id not in by_id]
+        if missing:
+            raise KeyError(f"run not found in experiment: {', '.join(missing)}")
+        baseline = by_id[baseline_id]
+        candidate = by_id[candidate_id]
+
+        def latest_metrics(run: Run) -> Dict[str, float]:
+            values: Dict[str, float] = {}
+            for metric in run.metrics:
+                values[metric.name] = metric.value
+            return values
+
+        baseline_metrics = latest_metrics(baseline)
+        candidate_metrics = latest_metrics(candidate)
+        metric_names = sorted(set(baseline_metrics) | set(candidate_metrics))
+        metric_changes = {
+            name: {
+                "baseline": baseline_metrics.get(name),
+                "candidate": candidate_metrics.get(name),
+                "delta": (
+                    candidate_metrics[name] - baseline_metrics[name]
+                    if name in baseline_metrics and name in candidate_metrics
+                    else None
+                ),
+            }
+            for name in metric_names
+        }
+        param_names = sorted(set(baseline.params) | set(candidate.params))
+        param_changes = {
+            name: {
+                "baseline": baseline.params.get(name),
+                "candidate": candidate.params.get(name),
+            }
+            for name in param_names
+            if baseline.params.get(name) != candidate.params.get(name)
+        }
+        return {
+            "baseline_run_id": baseline.id,
+            "candidate_run_id": candidate.id,
+            "metric_changes": metric_changes,
+            "parameter_changes": param_changes,
+        }
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,

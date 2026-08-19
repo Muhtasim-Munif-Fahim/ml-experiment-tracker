@@ -122,9 +122,16 @@ class LocalStorageBackend:
         statuses: Optional[List[str]] = None,
         tags: Optional[dict[str, str]] = None,
         name_contains: Optional[str] = None,
+        metric_name: Optional[str] = None,
+        min_metric: Optional[float] = None,
+        max_metric: Optional[float] = None,
     ) -> List[dict]:
-        """Filter stored runs by status, exact tags, and a name fragment."""
+        """Filter runs by metadata and the latest value of one metric."""
 
+        if (min_metric is not None or max_metric is not None) and not metric_name:
+            raise ValueError("metric_name is required for metric bounds")
+        if min_metric is not None and max_metric is not None and min_metric > max_metric:
+            raise ValueError("min_metric cannot exceed max_metric")
         allowed_statuses = set(statuses or [])
         required_tags = tags or {}
         fragment = name_contains.casefold() if name_contains else None
@@ -139,6 +146,19 @@ class LocalStorageBackend:
                 continue
             if fragment and fragment not in str(run.get("name", "")).casefold():
                 continue
+            if metric_name is not None:
+                metric_values = [
+                    metric.get("value")
+                    for metric in run.get("metrics", [])
+                    if metric.get("name") == metric_name
+                ]
+                if not metric_values:
+                    continue
+                latest_metric = float(metric_values[-1])
+                if min_metric is not None and latest_metric < min_metric:
+                    continue
+                if max_metric is not None and latest_metric > max_metric:
+                    continue
             matches.append(run)
         return sorted(
             matches,

@@ -185,6 +185,31 @@ def test_query_runs_requires_all_requested_tags():
         assert storage.query_runs("exp", tags={"dataset": "tabular", "stage": "prod"}) == []
 
 
+def test_query_runs_filters_by_latest_metric_value():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        inside = Run(experiment_id="exp", name="inside")
+        inside.log_metric("accuracy", 0.7, step=1)
+        inside.log_metric("accuracy", 0.9, step=2)
+        outside = Run(experiment_id="exp", name="outside")
+        outside.log_metric("accuracy", 0.6, step=1)
+        for run in (inside, outside):
+            storage.save_run(run.to_dict())
+
+        matches = storage.query_runs(
+            "exp", metric_name="accuracy", min_metric=0.8
+        )
+
+        assert [run["name"] for run in matches] == ["inside"]
+
+
+def test_query_runs_requires_metric_name_for_bounds():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        with pytest.raises(ValueError, match="metric_name"):
+            storage.query_runs("exp", min_metric=0.8)
+
+
 def test_get_best_run():
     exp = Experiment(name="test")
     run_a = Run(experiment_id=exp.id, name="a")

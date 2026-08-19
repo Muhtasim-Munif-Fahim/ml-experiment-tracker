@@ -120,10 +120,25 @@ def create_run(exp_id: str, run: RunCreate):
 
 
 @app.get("/experiments/{exp_id}/runs/", response_model=List[dict])
-def list_runs(exp_id: str, limit: int = 50, status: Optional[str] = None):
-    runs = storage.list_runs(exp_id)
-    runs_data = [r for r in runs if not status or r["status"] == status]
-    return runs_data[:limit]
+def list_runs(
+    exp_id: str,
+    limit: int = 50,
+    status: Optional[str] = None,
+    metric: Optional[str] = None,
+    min_metric: Optional[float] = None,
+    max_metric: Optional[float] = None,
+):
+    try:
+        runs = storage.query_runs(
+            exp_id,
+            statuses=[status] if status else None,
+            metric_name=metric,
+            min_metric=min_metric,
+            max_metric=max_metric,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return runs[:limit]
 
 
 @app.get("/runs/{run_id}", response_model=dict)

@@ -51,10 +51,24 @@ class ExperimentTrackerClient:
     def get_run(self, run_id: str) -> dict:
         return self._request("GET", f"/runs/{run_id}")
 
-    def list_runs(self, exp_id: str, limit: int = 50, status: str = None) -> List[dict]:
+    def list_runs(
+        self,
+        exp_id: str,
+        limit: int = 50,
+        status: str = None,
+        metric: str = None,
+        min_metric: float = None,
+        max_metric: float = None,
+    ) -> List[dict]:
         params = {"limit": limit}
         if status:
             params["status"] = status
+        if metric:
+            params["metric"] = metric
+        if min_metric is not None:
+            params["min_metric"] = min_metric
+        if max_metric is not None:
+            params["max_metric"] = max_metric
         return self._request("GET", f"/experiments/{exp_id}/runs/", params=params)
 
     def update_run(self, run_id: str, updates: dict) -> dict:

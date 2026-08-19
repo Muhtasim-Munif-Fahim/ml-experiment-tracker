@@ -120,6 +120,11 @@ class Run:
             "best_step": best.step,
         }
 
+    def metric_history(self, name: str) -> List[Dict[str, Any]]:
+        """Export one metric's recorded series in logging order."""
+
+        return [metric.to_dict() for metric in self.metrics if metric.name == name]
+
     def log_artifact(self, artifact: Artifact) -> None:
         self.artifacts.append(artifact)
 

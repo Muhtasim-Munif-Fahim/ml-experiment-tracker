@@ -200,6 +200,18 @@ def log_metrics(run_id: str, batch: MetricBatchCreate):
     return {"message": "Metrics logged", "count": len(batch.metrics)}
 
 
+@app.get("/runs/{run_id}/metrics/{metric_name}", response_model=List[dict])
+def metric_history(run_id: str, metric_name: str):
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return [
+        metric
+        for metric in run_data.get("metrics", [])
+        if metric.get("name") == metric_name
+    ]
+
+
 @app.post("/runs/{run_id}/artifacts", response_model=dict)
 def upload_artifact(run_id: str, name: str = Form(...), artifact_type: str = Form(...), file: UploadFile = File(...), metadata: str = Form("{}")):
     run_data = storage.load_run(run_id)

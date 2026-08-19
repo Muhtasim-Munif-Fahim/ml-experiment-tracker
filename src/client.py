@@ -89,6 +89,11 @@ class ExperimentTrackerClient:
             json={"metrics": metrics, "step": step},
         )
 
+    def metric_history(self, run_id: str, metric_name: str) -> List[dict]:
+        """Fetch the recorded series for one run metric."""
+
+        return self._request("GET", f"/runs/{run_id}/metrics/{metric_name}")
+
     def upload_artifact(self, run_id: str, name: str, artifact_type: str, file_path: str, metadata: dict = None) -> dict:
         import mimetypes
         with open(file_path, "rb") as f:

@@ -77,6 +77,20 @@ def test_metric_summary_preserves_history_and_steps():
     assert run.metric_summary("missing") is None
 
 
+def test_metric_history_exports_only_requested_series():
+    run = Run(experiment_id="test", name="test")
+    run.log_metric("loss", 0.5, step=1)
+    run.log_metric("accuracy", 0.8, step=1)
+    run.log_metric("loss", 0.3, step=2)
+
+    history = run.metric_history("loss")
+
+    assert [point["value"] for point in history] == [0.5, 0.3]
+    assert [point["step"] for point in history] == [1, 2]
+    assert all(point["name"] == "loss" for point in history)
+    assert run.metric_history("missing") == []
+
+
 def test_storage_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalStorageBackend(tmpdir)

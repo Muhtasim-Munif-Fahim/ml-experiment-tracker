@@ -34,6 +34,11 @@ class ExperimentTrackerClient:
     def get_experiment(self, exp_id: str) -> dict:
         return self._request("GET", f"/experiments/{exp_id}")
 
+    def experiment_summary(self, exp_id: str) -> dict:
+        """Fetch lifecycle and aggregate metric totals for an experiment."""
+
+        return self._request("GET", f"/experiments/{exp_id}/summary")
+
     def list_experiments(self, limit: int = 100, offset: int = 0) -> List[dict]:
         return self._request("GET", "/experiments/", params={"limit": limit, "offset": offset})
 

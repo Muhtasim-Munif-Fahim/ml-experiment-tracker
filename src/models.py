@@ -223,6 +223,34 @@ class Experiment:
             )
         return sorted(rows, key=lambda row: row["value"], reverse=maximize)
 
+    def summary(self) -> Dict[str, Any]:
+        """Return lifecycle counts and aggregate values for the experiment."""
+
+        status_counts = {status.value: 0 for status in RunStatus}
+        metric_values: Dict[str, List[float]] = {}
+        for run in self.runs:
+            status_counts[run.status.value] += 1
+            for metric in run.metrics:
+                metric_values.setdefault(metric.name, []).append(metric.value)
+
+        metrics = {
+            name: {
+                "count": len(values),
+                "min": min(values),
+                "max": max(values),
+                "mean": sum(values) / len(values),
+                "last": values[-1],
+            }
+            for name, values in sorted(metric_values.items())
+        }
+        return {
+            "experiment_id": self.id,
+            "name": self.name,
+            "run_count": len(self.runs),
+            "status_counts": status_counts,
+            "metrics": metrics,
+        }
+
     def run_lineage(self, run_id: str) -> List[Run]:
         """Return a run's ancestry from the root run through ``run_id``."""
 

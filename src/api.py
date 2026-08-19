@@ -91,6 +91,16 @@ def get_experiment(exp_id: str):
     return exp
 
 
+@app.get("/experiments/{exp_id}/summary", response_model=dict)
+def experiment_summary(exp_id: str):
+    exp_data = storage.load_experiment(exp_id)
+    if not exp_data:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    exp_data = dict(exp_data)
+    exp_data["runs"] = storage.list_runs(exp_id)
+    return Experiment.from_dict(exp_data).summary()
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

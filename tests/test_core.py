@@ -257,6 +257,35 @@ def test_metric_table_ranks_completed_runs_and_includes_params():
     assert table[0]["params"] == {"seed": 42}
 
 
+def test_experiment_summary_aggregates_lifecycle_and_metrics():
+    exp = Experiment(name="summary")
+    completed = Run(experiment_id=exp.id, name="completed")
+    completed.log_metrics({"accuracy": 0.8, "loss": 0.4})
+    completed.finish(RunStatus.COMPLETED)
+    failed = Run(experiment_id=exp.id, name="failed")
+    failed.log_metric("accuracy", 0.6)
+    failed.finish(RunStatus.FAILED)
+    running = Run(experiment_id=exp.id, name="running")
+    exp.runs.extend([completed, failed, running])
+
+    summary = exp.summary()
+
+    assert summary["run_count"] == 3
+    assert summary["status_counts"] == {
+        "running": 1,
+        "completed": 1,
+        "failed": 1,
+        "aborted": 0,
+    }
+    assert summary["metrics"]["accuracy"] == {
+        "count": 2,
+        "min": 0.6,
+        "max": 0.8,
+        "mean": 0.7,
+        "last": 0.6,
+    }
+
+
 def test_run_lineage_round_trips_and_orders_ancestors():
     exp = Experiment(name="lineage")
     root = Run(experiment_id=exp.id, name="baseline")

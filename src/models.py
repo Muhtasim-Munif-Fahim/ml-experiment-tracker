@@ -38,6 +38,14 @@ class Metric:
     step: Optional[int] = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "value": self.value,
+            "step": self.step,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
 
 @dataclass
 class Artifact:
@@ -83,6 +91,16 @@ class Run:
     def log_metric(self, name: str, value: float, step: Optional[int] = None) -> None:
         self.metrics.append(Metric(name=name, value=value, step=step))
 
+    def log_metrics(
+        self, metrics: Dict[str, float], step: Optional[int] = None
+    ) -> None:
+        """Record a group of metrics at one training step."""
+
+        if not isinstance(metrics, dict) or not metrics:
+            raise ValueError("metrics must be a non-empty mapping")
+        for name, value in metrics.items():
+            self.log_metric(name, value, step=step)
+
     def metric_summary(self, name: str) -> Optional[Dict[str, Any]]:
         """Summarize the recorded history for one metric."""
 
@@ -119,7 +137,7 @@ class Run:
             "parent_run_id": self.parent_run_id,
             "status": self.status.value,
             "params": self.params,
-            "metrics": [{"name": m.name, "value": m.value, "step": m.step, "timestamp": m.timestamp.isoformat()} for m in self.metrics],
+            "metrics": [m.to_dict() for m in self.metrics],
             "artifacts": [{"name": a.name, "type": a.artifact_type.value, "path": a.path, "size": a.size_bytes} for a in self.artifacts],
             "tags": self.tags,
             "created_at": self.created_at.isoformat(),

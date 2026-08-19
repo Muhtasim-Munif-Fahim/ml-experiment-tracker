@@ -42,6 +42,21 @@ def test_run_log_metric():
     assert run.metrics[0].step == 1
 
 
+def test_run_log_metrics_records_a_shared_step():
+    run = Run(experiment_id="test", name="test")
+    run.log_metrics({"loss": 0.3, "accuracy": 0.9}, step=4)
+
+    assert [(metric.name, metric.value, metric.step) for metric in run.metrics] == [
+        ("loss", 0.3, 4),
+        ("accuracy", 0.9, 4),
+    ]
+
+
+def test_run_log_metrics_rejects_empty_mapping():
+    with pytest.raises(ValueError, match="non-empty"):
+        Run(experiment_id="test", name="test").log_metrics({})
+
+
 def test_metric_summary_preserves_history_and_steps():
     run = Run(experiment_id="test", name="test")
     run.log_metric("accuracy", 0.7, step=1)

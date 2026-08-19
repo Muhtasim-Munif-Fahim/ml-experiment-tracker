@@ -66,6 +66,15 @@ class ExperimentTrackerClient:
     def log_metric(self, run_id: str, name: str, value: float, step: int = None) -> dict:
         return self._request("POST", f"/runs/{run_id}/metrics", json={"name": name, "value": value, "step": step})
 
+    def log_metrics(self, run_id: str, metrics: dict, step: int = None) -> dict:
+        """Log several metrics in one request at a shared step."""
+
+        return self._request(
+            "POST",
+            f"/runs/{run_id}/metrics/batch",
+            json={"metrics": metrics, "step": step},
+        )
+
     def upload_artifact(self, run_id: str, name: str, artifact_type: str, file_path: str, metadata: dict = None) -> dict:
         import mimetypes
         with open(file_path, "rb") as f:
@@ -108,6 +117,9 @@ class ExperimentContext:
 
     def log_metric(self, name: str, value: float, step: int = None):
         self.client.log_metric(self.run["id"], name, value, step)
+
+    def log_metrics(self, metrics: dict, step: int = None):
+        self.client.log_metrics(self.run["id"], metrics, step)
 
     def log_artifact(self, name: str, artifact_type: str, file_path: str, metadata: dict = None):
         self.client.upload_artifact(self.run["id"], name, artifact_type, file_path, metadata)

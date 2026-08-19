@@ -50,6 +50,11 @@ class MetricCreate(BaseModel):
     step: Optional[int] = None
 
 
+class MetricBatchCreate(BaseModel):
+    metrics: Dict[str, float] = Field(min_length=1)
+    step: Optional[int] = None
+
+
 app = FastAPI(title="ML Experiment Tracker API", version="0.1.0")
 
 app.add_middleware(
@@ -159,6 +164,25 @@ def log_metric(run_id: str, metric: MetricCreate):
     run_data.setdefault("metrics", []).append(metric.model_dump())
     storage.save_run(run_data)
     return {"message": "Metric logged"}
+
+
+@app.post("/runs/{run_id}/metrics/batch", response_model=dict)
+def log_metrics(run_id: str, batch: MetricBatchCreate):
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    timestamp = datetime.utcnow().isoformat()
+    run_data.setdefault("metrics", []).extend(
+        {
+            "name": name,
+            "value": value,
+            "step": batch.step,
+            "timestamp": timestamp,
+        }
+        for name, value in batch.metrics.items()
+    )
+    storage.save_run(run_data)
+    return {"message": "Metrics logged", "count": len(batch.metrics)}
 
 
 @app.post("/runs/{run_id}/artifacts", response_model=dict)

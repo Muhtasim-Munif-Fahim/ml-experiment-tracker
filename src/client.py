@@ -79,6 +79,11 @@ class ExperimentTrackerClient:
     def update_run(self, run_id: str, updates: dict) -> dict:
         return self._request("PATCH", f"/runs/{run_id}", json=updates)
 
+    def delete_run(self, run_id: str) -> None:
+        """Delete a run and its metadata record."""
+
+        self._request("DELETE", f"/runs/{run_id}")
+
     def log_param(self, run_id: str, name: str, value: Any) -> dict:
         return self._request("POST", f"/runs/{run_id}/params", json={"name": name, "value": value})
 

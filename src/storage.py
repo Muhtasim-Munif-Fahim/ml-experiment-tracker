@@ -103,6 +103,14 @@ class LocalStorageBackend:
         with open(path) as f:
             return json.load(f)
 
+    def delete_run(self, run_id: str) -> bool:
+        """Remove a run record, returning True if it existed."""
+        path = self._run_path(run_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def list_runs(self, experiment_id: str) -> List[dict]:
         runs_dir = self.experiments_dir / "runs"
         if not runs_dir.exists():

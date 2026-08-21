@@ -416,3 +416,19 @@ def test_run_leaderboard_requires_metric_name():
         storage = LocalStorageBackend(tmpdir)
         with pytest.raises(ValueError, match="metric_name"):
             storage.run_leaderboard("exp", "")
+
+def test_delete_run_removes_record():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        run = Run(experiment_id="exp", name="to-remove")
+        storage.save_run(run.to_dict())
+        assert storage.load_run(run.id) is not None
+
+        assert storage.delete_run(run.id) is True
+        assert storage.load_run(run.id) is None
+
+
+def test_delete_run_missing_returns_false():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        assert storage.delete_run("does-not-exist") is False

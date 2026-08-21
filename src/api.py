@@ -171,6 +171,13 @@ def update_run(run_id: str, updates: RunUpdate):
     return run_data
 
 
+@app.delete("/runs/{run_id}")
+def delete_run(run_id: str):
+    if not storage.delete_run(run_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {"message": "Run deleted"}
+
+
 @app.post("/runs/{run_id}/params", response_model=dict)
 def log_param(run_id: str, param: ParamCreate):
     run_data = storage.load_run(run_id)

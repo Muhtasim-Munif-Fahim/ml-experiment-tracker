@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -220,6 +220,22 @@ def metric_history(run_id: str, metric_name: str):
         for metric in run_data.get("metrics", [])
         if metric.get("name") == metric_name
     ]
+
+
+@app.get("/experiments/{exp_id}/leaderboard", response_model=List[dict])
+def run_leaderboard(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+    limit: int = Query(10, ge=1),
+):
+    """Rank runs of an experiment by the latest value of one metric."""
+    try:
+        return storage.run_leaderboard(
+            exp_id, metric, maximize=maximize, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/runs/{run_id}/artifacts", response_model=dict)

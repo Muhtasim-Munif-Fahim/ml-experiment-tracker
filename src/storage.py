@@ -195,6 +195,51 @@ class LocalStorageBackend:
             raise ValueError("expected_sha256 must be a 64-character hex digest")
         return self.artifact_checksum(artifact_path) == normalized
 
+    def run_leaderboard(
+        self,
+        experiment_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[dict]:
+        """Rank runs of one experiment by their latest value of a metric.
+
+        Returns a list of ``{"run_id", "name", "value", "step"}`` entries
+        ordered by metric value so the best run comes first. Runs without any
+        recorded value for the metric are omitted.
+        """
+        if not metric_name:
+            raise ValueError("metric_name is required")
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be positive")
+
+        ranked = []
+        for run in self.list_runs(experiment_id):
+            values = [
+                metric.get("value")
+                for metric in run.get("metrics", [])
+                if metric.get("name") == metric_name
+            ]
+            if not values:
+                continue
+            step = None
+            for metric in run.get("metrics", []):
+                if metric.get("name") == metric_name:
+                    step = metric.get("step")
+            ranked.append(
+                {
+                    "run_id": run.get("id"),
+                    "name": run.get("name"),
+                    "value": float(values[-1]),
+                    "step": step,
+                }
+            )
+        ranked.sort(key=lambda entry: entry["value"], reverse=maximize)
+        if limit is not None:
+            ranked = ranked[:limit]
+        return ranked
+
     def export_experiment(self, exp_id: str, destination: Path) -> Path:
         """Export experiment metadata and all run records as one JSON bundle."""
 

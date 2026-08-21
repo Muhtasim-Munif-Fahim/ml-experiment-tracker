@@ -99,6 +99,21 @@ class ExperimentTrackerClient:
 
         return self._request("GET", f"/runs/{run_id}/metrics/{metric_name}")
 
+    def run_leaderboard(
+        self,
+        exp_id: str,
+        metric: str,
+        maximize: bool = True,
+        limit: int = 10,
+    ) -> List[dict]:
+        """Rank runs of an experiment by the latest value of one metric."""
+
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/leaderboard",
+            params={"metric": metric, "maximize": maximize, "limit": limit},
+        )
+
     def upload_artifact(self, run_id: str, name: str, artifact_type: str, file_path: str, metadata: dict = None) -> dict:
         import mimetypes
         with open(file_path, "rb") as f:

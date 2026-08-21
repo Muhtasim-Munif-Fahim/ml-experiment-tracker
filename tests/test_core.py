@@ -350,3 +350,69 @@ def test_artifact_serialization():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+def test_run_leaderboard_ranks_by_latest_metric():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        best = Run(experiment_id="exp", name="best")
+        best.log_metric("accuracy", 0.7, step=1)
+        best.log_metric("accuracy", 0.95, step=2)
+        worst = Run(experiment_id="exp", name="worst")
+        worst.log_metric("accuracy", 0.5, step=1)
+        for run in (best, worst):
+            storage.save_run(run.to_dict())
+
+        ranking = storage.run_leaderboard("exp", "accuracy", maximize=True)
+
+        assert [entry["name"] for entry in ranking] == ["best", "worst"]
+        assert ranking[0]["value"] == 0.95
+
+
+def test_run_leaderboard_minimize_orders_ascending():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        low = Run(experiment_id="exp", name="low")
+        low.log_metric("loss", 0.1)
+        high = Run(experiment_id="exp", name="high")
+        high.log_metric("loss", 0.9)
+        for run in (low, high):
+            storage.save_run(run.to_dict())
+
+        ranking = storage.run_leaderboard("exp", "loss", maximize=False)
+
+        assert [entry["name"] for entry in ranking] == ["low", "high"]
+
+
+def test_run_leaderboard_omits_runs_without_metric():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        with_metric = Run(experiment_id="exp", name="has")
+        with_metric.log_metric("accuracy", 0.8)
+        without = Run(experiment_id="exp", name="none")
+        for run in (with_metric, without):
+            storage.save_run(run.to_dict())
+
+        ranking = storage.run_leaderboard("exp", "accuracy")
+
+        assert [entry["name"] for entry in ranking] == ["has"]
+
+
+def test_run_leaderboard_limit():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        for i in range(5):
+            run = Run(experiment_id="exp", name=f"run-{i}")
+            run.log_metric("accuracy", i / 10)
+            storage.save_run(run.to_dict())
+
+        ranking = storage.run_leaderboard("exp", "accuracy", limit=2)
+
+        assert len(ranking) == 2
+        assert ranking[0]["value"] == 0.4
+
+
+def test_run_leaderboard_requires_metric_name():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalStorageBackend(tmpdir)
+        with pytest.raises(ValueError, match="metric_name"):
+            storage.run_leaderboard("exp", "")

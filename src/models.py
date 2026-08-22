@@ -154,6 +154,20 @@ class Run:
     def log_artifact(self, artifact: Artifact) -> None:
         self.artifacts.append(artifact)
 
+    def artifact_inventory(self) -> List[Dict[str, Any]]:
+        """Summarize retained artifacts by type for storage and review planning."""
+
+        inventory: Dict[str, Dict[str, Any]] = {}
+        for artifact in self.artifacts:
+            kind = artifact.artifact_type.value
+            entry = inventory.setdefault(
+                kind, {"type": kind, "count": 0, "size_bytes": 0, "names": []}
+            )
+            entry["count"] += 1
+            entry["size_bytes"] += artifact.size_bytes
+            entry["names"].append(artifact.name)
+        return [inventory[kind] for kind in sorted(inventory)]
+
     def finish(self, status: RunStatus = RunStatus.COMPLETED, error: Optional[str] = None) -> None:
         self.status = status
         self.finished_at = datetime.utcnow()

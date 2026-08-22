@@ -389,6 +389,18 @@ def test_artifact_serialization():
     assert data["checksum_sha256"] == "a" * 64
 
 
+def test_artifact_inventory_groups_storage_by_artifact_type():
+    run = Run(experiment_id="test", name="artifacts")
+    run.log_artifact(Artifact("model-a", ArtifactType.MODEL, "a", 12))
+    run.log_artifact(Artifact("model-b", ArtifactType.MODEL, "b", 8))
+    run.log_artifact(Artifact("plot", ArtifactType.PLOT, "plot", 4))
+
+    assert run.artifact_inventory() == [
+        {"type": "model", "count": 2, "size_bytes": 20, "names": ["model-a", "model-b"]},
+        {"type": "plot", "count": 1, "size_bytes": 4, "names": ["plot"]},
+    ]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

@@ -104,6 +104,18 @@ def test_metric_history_exports_only_requested_series():
     assert run.metric_history("missing") == []
 
 
+def test_metric_history_can_be_sliced_by_inclusive_steps():
+    run = Run(experiment_id="test", name="test")
+    for step in range(1, 5):
+        run.log_metric("loss", 1.0 / step, step=step)
+
+    history = run.metric_history("loss", start_step=2, end_step=3)
+    assert [point["step"] for point in history] == [2, 3]
+
+    with pytest.raises(ValueError, match="start_step"):
+        run.metric_history("loss", start_step=3, end_step=2)
+
+
 def test_storage_roundtrip():
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalStorageBackend(tmpdir)

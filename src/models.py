@@ -132,10 +132,24 @@ class Run:
             "best_step": best.step,
         }
 
-    def metric_history(self, name: str) -> List[Dict[str, Any]]:
-        """Export one metric's recorded series in logging order."""
+    def metric_history(
+        self,
+        name: str,
+        *,
+        start_step: Optional[int] = None,
+        end_step: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Export one metric series, optionally restricted to an inclusive step range."""
 
-        return [metric.to_dict() for metric in self.metrics if metric.name == name]
+        if start_step is not None and end_step is not None and start_step > end_step:
+            raise ValueError("start_step must not exceed end_step")
+        return [
+            metric.to_dict()
+            for metric in self.metrics
+            if metric.name == name
+            and (start_step is None or metric.step is not None and metric.step >= start_step)
+            and (end_step is None or metric.step is not None and metric.step <= end_step)
+        ]
 
     def log_artifact(self, artifact: Artifact) -> None:
         self.artifacts.append(artifact)

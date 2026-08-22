@@ -282,6 +282,22 @@ def test_metric_table_ranks_completed_runs_and_includes_params():
     assert table[0]["params"] == {"seed": 42}
 
 
+def test_metric_catalog_reports_run_and_point_coverage():
+    exp = Experiment(name="metrics")
+    first = Run(experiment_id=exp.id, name="first")
+    first.log_metric("accuracy", 0.8, step=1)
+    first.log_metric("accuracy", 0.9, step=2)
+    second = Run(experiment_id=exp.id, name="second")
+    second.log_metric("loss", 0.2, step=1)
+    second.log_metric("accuracy", 0.7, step=1)
+    exp.runs.extend([first, second])
+
+    assert exp.metric_catalog() == [
+        {"name": "accuracy", "run_count": 2, "point_count": 3},
+        {"name": "loss", "run_count": 1, "point_count": 1},
+    ]
+
+
 def test_experiment_summary_aggregates_lifecycle_and_metrics():
     exp = Experiment(name="summary")
     completed = Run(experiment_id=exp.id, name="completed")

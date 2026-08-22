@@ -249,6 +249,23 @@ class Experiment:
             )
         return sorted(rows, key=lambda row: row["value"], reverse=maximize)
 
+    def metric_catalog(self) -> List[Dict[str, Any]]:
+        """List metrics recorded in the experiment with run and point coverage."""
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for run in self.runs:
+            seen_in_run = set()
+            for metric in run.metrics:
+                entry = catalog.setdefault(
+                    metric.name,
+                    {"name": metric.name, "run_count": 0, "point_count": 0},
+                )
+                entry["point_count"] += 1
+                seen_in_run.add(metric.name)
+            for name in seen_in_run:
+                catalog[name]["run_count"] += 1
+        return [catalog[name] for name in sorted(catalog)]
+
     def summary(self) -> Dict[str, Any]:
         """Return lifecycle counts and aggregate values for the experiment."""
 

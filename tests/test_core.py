@@ -32,6 +32,19 @@ def test_run_log_param():
     assert run.params["lr"] == 0.01
 
 
+def test_run_clone_copies_configuration_and_preserves_lineage():
+    source = Run(
+        experiment_id="test", name="baseline", params={"lr": 0.01}, tags={"stage": "base"}
+    )
+    clone = source.clone("candidate")
+
+    assert clone.name == "candidate"
+    assert clone.parent_run_id == source.id
+    assert clone.params == source.params and clone.params is not source.params
+    assert clone.tags == source.tags and clone.tags is not source.tags
+    assert clone.metrics == []
+
+
 def test_run_log_metric():
     run = Run(experiment_id="test", name="test")
     run.log_metric("loss", 0.5, step=1)

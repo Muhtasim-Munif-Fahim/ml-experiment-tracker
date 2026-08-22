@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -87,6 +88,17 @@ class Run:
 
     def log_param(self, name: str, value: Any) -> None:
         self.params[name] = value
+
+    def clone(self, name: Optional[str] = None) -> "Run":
+        """Create a new running child run with copied configuration metadata."""
+
+        return Run(
+            experiment_id=self.experiment_id,
+            name=name or f"{self.name} (clone)",
+            parent_run_id=self.id,
+            params=deepcopy(self.params),
+            tags=deepcopy(self.tags),
+        )
 
     def log_metric(self, name: str, value: float, step: Optional[int] = None) -> None:
         self.metrics.append(Metric(name=name, value=value, step=step))

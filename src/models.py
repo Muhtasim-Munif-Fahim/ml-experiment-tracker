@@ -311,6 +311,18 @@ class Experiment:
                 catalog[name]["run_count"] += 1
         return [catalog[name] for name in sorted(catalog)]
 
+    def parameter_catalog(self) -> List[Dict[str, Any]]:
+        """List configured parameter values and the run coverage for each name."""
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for run in self.runs:
+            for name, value in run.params.items():
+                entry = catalog.setdefault(name, {"name": name, "run_count": 0, "values": []})
+                entry["run_count"] += 1
+                if value not in entry["values"]:
+                    entry["values"].append(deepcopy(value))
+        return [catalog[name] for name in sorted(catalog)]
+
     def summary(self) -> Dict[str, Any]:
         """Return lifecycle counts and aggregate values for the experiment."""
 

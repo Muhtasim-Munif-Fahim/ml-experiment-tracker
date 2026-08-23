@@ -333,6 +333,21 @@ def test_metric_catalog_reports_run_and_point_coverage():
     ]
 
 
+def test_parameter_catalog_reports_configurations_across_runs():
+    exp = Experiment(name="parameters")
+    exp.runs.extend(
+        [
+            Run(experiment_id=exp.id, name="baseline", params={"lr": 0.1, "seed": 7}),
+            Run(experiment_id=exp.id, name="candidate", params={"lr": 0.05, "seed": 7}),
+        ]
+    )
+
+    assert exp.parameter_catalog() == [
+        {"name": "lr", "run_count": 2, "values": [0.1, 0.05]},
+        {"name": "seed", "run_count": 2, "values": [7]},
+    ]
+
+
 def test_experiment_summary_aggregates_lifecycle_and_metrics():
     exp = Experiment(name="summary")
     completed = Run(experiment_id=exp.id, name="completed")

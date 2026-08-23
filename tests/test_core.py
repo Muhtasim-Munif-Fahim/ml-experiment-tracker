@@ -102,6 +102,29 @@ def test_best_metric_preserves_the_selected_point_metadata():
     assert run.best_metric("missing") is None
 
 
+def test_metric_window_summary_reports_recent_progress():
+    run = Run(experiment_id="test", name="test")
+    for step, value in enumerate([0.4, 0.5, 0.7, 0.9], start=1):
+        run.log_metric("accuracy", value, step=step)
+
+    assert run.metric_window_summary("accuracy", 2) == {
+        "name": "accuracy",
+        "requested_window": 2,
+        "count": 2,
+        "first": 0.7,
+        "last": 0.9,
+        "delta": pytest.approx(0.2),
+        "min": 0.7,
+        "max": 0.9,
+        "mean": 0.8,
+        "first_step": 3,
+        "last_step": 4,
+    }
+    assert run.metric_window_summary("missing", 2) is None
+    with pytest.raises(ValueError, match="positive integer"):
+        run.metric_window_summary("accuracy", 0)
+
+
 def test_metric_history_exports_only_requested_series():
     run = Run(experiment_id="test", name="test")
     run.log_metric("loss", 0.5, step=1)

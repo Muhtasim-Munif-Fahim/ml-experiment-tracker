@@ -140,6 +140,29 @@ class Run:
             return None
         return (max if maximize else min)(matching, key=lambda metric: metric.value).to_dict()
 
+    def metric_window_summary(self, name: str, window: int) -> Optional[Dict[str, Any]]:
+        """Summarize the most recent ``window`` points for one metric."""
+
+        if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+            raise ValueError("window must be a positive integer")
+        matching = [metric for metric in self.metrics if metric.name == name][-window:]
+        if not matching:
+            return None
+        values = [metric.value for metric in matching]
+        return {
+            "name": name,
+            "requested_window": window,
+            "count": len(matching),
+            "first": values[0],
+            "last": values[-1],
+            "delta": values[-1] - values[0],
+            "min": min(values),
+            "max": max(values),
+            "mean": sum(values) / len(values),
+            "first_step": matching[0].step,
+            "last_step": matching[-1].step,
+        }
+
     def metric_history(
         self,
         name: str,

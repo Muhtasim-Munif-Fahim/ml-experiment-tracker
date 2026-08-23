@@ -2,6 +2,7 @@
 
 import uuid
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -346,6 +347,26 @@ def test_parameter_catalog_reports_configurations_across_runs():
         {"name": "lr", "run_count": 2, "values": [0.1, 0.05]},
         {"name": "seed", "run_count": 2, "values": [7]},
     ]
+
+
+def test_duration_summary_reports_finished_run_execution_time():
+    exp = Experiment(name="durations")
+    started = datetime(2026, 8, 23, 9, 0, 0)
+    short = Run(experiment_id=exp.id, name="short", created_at=started)
+    short.finished_at = started + timedelta(seconds=30)
+    long = Run(experiment_id=exp.id, name="long", created_at=started)
+    long.finished_at = started + timedelta(seconds=90)
+    running = Run(experiment_id=exp.id, name="running", created_at=started)
+    exp.runs.extend([short, long, running])
+
+    assert exp.duration_summary() == {
+        "finished_run_count": 2,
+        "invalid_run_count": 0,
+        "min_seconds": 30.0,
+        "max_seconds": 90.0,
+        "mean_seconds": 60.0,
+        "total_seconds": 120.0,
+    }
 
 
 def test_experiment_summary_aggregates_lifecycle_and_metrics():

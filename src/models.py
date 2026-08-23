@@ -323,6 +323,37 @@ class Experiment:
                     entry["values"].append(deepcopy(value))
         return [catalog[name] for name in sorted(catalog)]
 
+    def duration_summary(self) -> Dict[str, Any]:
+        """Summarize elapsed durations for runs that have finished."""
+
+        durations = [
+            (run.finished_at - run.created_at).total_seconds()
+            for run in self.runs
+            if run.finished_at is not None and run.finished_at >= run.created_at
+        ]
+        invalid_count = sum(
+            1
+            for run in self.runs
+            if run.finished_at is not None and run.finished_at < run.created_at
+        )
+        if not durations:
+            return {
+                "finished_run_count": 0,
+                "invalid_run_count": invalid_count,
+                "min_seconds": None,
+                "max_seconds": None,
+                "mean_seconds": None,
+                "total_seconds": 0.0,
+            }
+        return {
+            "finished_run_count": len(durations),
+            "invalid_run_count": invalid_count,
+            "min_seconds": min(durations),
+            "max_seconds": max(durations),
+            "mean_seconds": sum(durations) / len(durations),
+            "total_seconds": sum(durations),
+        }
+
     def summary(self) -> Dict[str, Any]:
         """Return lifecycle counts and aggregate values for the experiment."""
 

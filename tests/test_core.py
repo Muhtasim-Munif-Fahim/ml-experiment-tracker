@@ -90,6 +90,18 @@ def test_metric_summary_preserves_history_and_steps():
     assert run.metric_summary("missing") is None
 
 
+def test_best_metric_preserves_the_selected_point_metadata():
+    run = Run(experiment_id="test", name="test")
+    run.log_metric("accuracy", 0.7, step=1)
+    run.log_metric("accuracy", 0.9, step=2)
+    run.log_metric("accuracy", 0.8, step=3)
+
+    assert run.best_metric("accuracy")["step"] == 2
+    assert run.best_metric("accuracy")["value"] == 0.9
+    assert run.best_metric("accuracy", maximize=False)["step"] == 1
+    assert run.best_metric("missing") is None
+
+
 def test_metric_history_exports_only_requested_series():
     run = Run(experiment_id="test", name="test")
     run.log_metric("loss", 0.5, step=1)

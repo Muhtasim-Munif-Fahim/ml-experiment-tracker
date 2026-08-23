@@ -132,6 +132,14 @@ class Run:
             "best_step": best.step,
         }
 
+    def best_metric(self, name: str, *, maximize: bool = True) -> Optional[Dict[str, Any]]:
+        """Return the best recorded point for a metric in its original context."""
+
+        matching = [metric for metric in self.metrics if metric.name == name]
+        if not matching:
+            return None
+        return (max if maximize else min)(matching, key=lambda metric: metric.value).to_dict()
+
     def metric_history(
         self,
         name: str,

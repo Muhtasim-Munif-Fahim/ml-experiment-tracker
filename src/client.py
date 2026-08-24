@@ -170,6 +170,19 @@ class ExperimentTrackerClient:
         """Fetch alerts recorded when logged metrics breached thresholds."""
         return self._request("GET", f"/runs/{run_id}/alerts")
 
+    def create_note(self, run_id: str, body: str) -> dict:
+        """Attach a freeform markdown note to a run."""
+        return self._request("POST", f"/runs/{run_id}/notes", json={"body": body})
+
+    def list_notes(self, run_id: str) -> List[dict]:
+        return self._request("GET", f"/runs/{run_id}/notes")
+
+    def update_note(self, run_id: str, note_id: str, body: str) -> dict:
+        return self._request("PUT", f"/runs/{run_id}/notes/{note_id}", json={"body": body})
+
+    def delete_note(self, run_id: str, note_id: str) -> dict:
+        return self._request("DELETE", f"/runs/{run_id}/notes/{note_id}")
+
 
 class ExperimentContext:
     """Context manager for running an experiment."""

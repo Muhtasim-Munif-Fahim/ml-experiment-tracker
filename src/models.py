@@ -118,6 +118,7 @@ class Run:
     artifacts: List[Artifact] = field(default_factory=list)
     tags: Dict[str, str] = field(default_factory=dict)
     alerts: List[Dict[str, Any]] = field(default_factory=list)
+    notes: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
@@ -254,6 +255,7 @@ class Run:
             "artifacts": [{"name": a.name, "type": a.artifact_type.value, "path": a.path, "size": a.size_bytes} for a in self.artifacts],
             "tags": self.tags,
             "alerts": [dict(alert) for alert in self.alerts],
+            "notes": [dict(note) for note in self.notes],
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -279,6 +281,7 @@ class Run:
             run.finished_at = datetime.fromisoformat(data["finished_at"])
         run.error = data.get("error")
         run.alerts = [dict(alert) for alert in data.get("alerts", [])]
+        run.notes = [dict(note) for note in data.get("notes", [])]
         return run
 
 

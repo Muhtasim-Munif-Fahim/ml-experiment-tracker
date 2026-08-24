@@ -63,6 +63,10 @@ class AlertRuleCreate(BaseModel):
     threshold: float
 
 
+class NoteCreate(BaseModel):
+    body: str
+
+
 app = FastAPI(title="ML Experiment Tracker API", version="0.1.0")
 
 app.add_middleware(
@@ -387,6 +391,49 @@ def download_artifact(run_id: str, artifact_ref: str):
         filename=filename,
         headers=headers,
     )
+
+
+@app.post("/runs/{run_id}/notes", response_model=dict)
+def create_note(run_id: str, note: NoteCreate):
+    """Attach a freeform markdown note to a run."""
+    try:
+        return storage.add_note(run_id, note.body)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/runs/{run_id}/notes", response_model=List[dict])
+def list_notes(run_id: str):
+    try:
+        return storage.list_notes(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+
+
+@app.put("/runs/{run_id}/notes/{note_id}", response_model=dict)
+def update_note(run_id: str, note_id: str, note: NoteCreate):
+    try:
+        updated = storage.update_note(run_id, note_id, note.body)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return updated
+
+
+@app.delete("/runs/{run_id}/notes/{note_id}")
+def delete_note(run_id: str, note_id: str):
+    try:
+        deleted = storage.delete_note(run_id, note_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"message": "Note deleted"}
 
 
 # Health check

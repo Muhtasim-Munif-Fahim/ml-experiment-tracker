@@ -6,6 +6,7 @@ import os
 import shutil
 import json
 import hashlib
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -261,6 +262,56 @@ class LocalStorageBackend:
         if limit is not None:
             ranked = ranked[:limit]
         return ranked
+
+    def add_note(self, run_id: str, body: str) -> dict:
+        """Append a markdown note to a run and return the stored note."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("note body must be a non-empty string")
+        note = {
+            "id": f"note_{uuid.uuid4().hex[:8]}",
+            "body": body,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        run_data.setdefault("notes", []).append(note)
+        self.save_run(run_data)
+        return note
+
+    def list_notes(self, run_id: str) -> List[dict]:
+        """Return the notes attached to a run in creation order."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        return list(run_data.get("notes", []))
+
+    def update_note(self, run_id: str, note_id: str, body: str) -> Optional[dict]:
+        """Replace a note's body; returns None when the note does not exist."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        if not isinstance(body, str) or not body.strip():
+            raise ValueError("note body must be a non-empty string")
+        for note in run_data.get("notes", []):
+            if note.get("id") == note_id:
+                note["body"] = body
+                self.save_run(run_data)
+                return note
+        return None
+
+    def delete_note(self, run_id: str, note_id: str) -> bool:
+        """Remove one note, returning True if it existed."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        notes = run_data.get("notes", [])
+        remaining = [note for note in notes if note.get("id") != note_id]
+        if len(remaining) == len(notes):
+            return False
+        run_data["notes"] = remaining
+        self.save_run(run_data)
+        return True
 
     def save_alert_rule(self, exp_id: str, rule: dict) -> dict:
         """Attach a metric threshold rule to an experiment."""

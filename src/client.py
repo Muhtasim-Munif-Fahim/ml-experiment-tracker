@@ -129,6 +129,28 @@ class ExperimentTrackerClient:
     def list_artifacts(self, run_id: str) -> List[dict]:
         return self._request("GET", f"/runs/{run_id}/artifacts/")
 
+    def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
+        """Open an experiment context that creates a run on entry."""
+        return ExperimentContext(self, name=name, description=description, tags=tags, params=params)
+
+    def create_alert_rule(self, exp_id: str, metric_name: str, comparator: str, threshold: float) -> dict:
+        """Register a metric threshold rule evaluated as metrics are logged."""
+        return self._request(
+            "POST",
+            f"/experiments/{exp_id}/alert-rules",
+            json={"metric_name": metric_name, "comparator": comparator, "threshold": threshold},
+        )
+
+    def list_alert_rules(self, exp_id: str) -> List[dict]:
+        return self._request("GET", f"/experiments/{exp_id}/alert-rules")
+
+    def delete_alert_rule(self, exp_id: str, rule_id: str) -> dict:
+        return self._request("DELETE", f"/experiments/{exp_id}/alert-rules/{rule_id}")
+
+    def run_alerts(self, run_id: str) -> List[dict]:
+        """Fetch alerts recorded when logged metrics breached thresholds."""
+        return self._request("GET", f"/runs/{run_id}/alerts")
+
 
 class ExperimentContext:
     """Context manager for running an experiment."""
@@ -170,11 +192,6 @@ class ExperimentContext:
 
     def __getattr__(self, name):
         return getattr(self.client, name)
-
-
-class ExperimentTrackerClient:
-    def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
-        return ExperimentContext(self, name=name, description=description, tags=tags, params=params)
 
 
 def get_tracker(base_url: str = "http://localhost:8000") -> ExperimentTrackerClient:

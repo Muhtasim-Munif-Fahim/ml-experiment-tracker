@@ -71,6 +71,42 @@ class Artifact:
 
 
 @dataclass
+class AlertRule:
+    """Threshold condition checked against metrics as they are logged."""
+
+    metric_name: str
+    comparator: str
+    threshold: float
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+    def __post_init__(self) -> None:
+        if self.comparator not in ("gt", "lt"):
+            raise ValueError("comparator must be 'gt' or 'lt'")
+
+    def matches(self, value: float) -> bool:
+        if self.comparator == "gt":
+            return value > self.threshold
+        return value < self.threshold
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "metric_name": self.metric_name,
+            "comparator": self.comparator,
+            "threshold": self.threshold,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AlertRule":
+        return cls(
+            id=data["id"],
+            metric_name=data["metric_name"],
+            comparator=data["comparator"],
+            threshold=float(data["threshold"]),
+        )
+
+
+@dataclass
 class Run:
     experiment_id: str
     name: str
@@ -81,6 +117,7 @@ class Run:
     metrics: List[Metric] = field(default_factory=list)
     artifacts: List[Artifact] = field(default_factory=list)
     tags: Dict[str, str] = field(default_factory=dict)
+    alerts: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
@@ -216,6 +253,7 @@ class Run:
             "metrics": [m.to_dict() for m in self.metrics],
             "artifacts": [{"name": a.name, "type": a.artifact_type.value, "path": a.path, "size": a.size_bytes} for a in self.artifacts],
             "tags": self.tags,
+            "alerts": [dict(alert) for alert in self.alerts],
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
@@ -240,6 +278,7 @@ class Run:
         if data.get("finished_at"):
             run.finished_at = datetime.fromisoformat(data["finished_at"])
         run.error = data.get("error")
+        run.alerts = [dict(alert) for alert in data.get("alerts", [])]
         return run
 
 

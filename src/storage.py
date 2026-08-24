@@ -7,10 +7,11 @@ import shutil
 import json
 import hashlib
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, List, Optional
+from typing import Any, BinaryIO, Iterable, List, Optional
 
-from .models import Run, Experiment, Artifact
+from .models import AlertRule, Run, Experiment, Artifact
 
 EXPERIMENT_BUNDLE_VERSION = 1
 
@@ -247,6 +248,71 @@ class LocalStorageBackend:
         if limit is not None:
             ranked = ranked[:limit]
         return ranked
+
+    def save_alert_rule(self, exp_id: str, rule: dict) -> dict:
+        """Attach a metric threshold rule to an experiment."""
+        experiment = self.load_experiment(exp_id)
+        if experiment is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        experiment.setdefault("alert_rules", []).append(rule)
+        self.save_experiment(experiment)
+        return rule
+
+    def list_alert_rules(self, exp_id: str) -> List[dict]:
+        """Return the alert rules configured for an experiment."""
+        experiment = self.load_experiment(exp_id)
+        if experiment is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return list(experiment.get("alert_rules", []))
+
+    def delete_alert_rule(self, exp_id: str, rule_id: str) -> bool:
+        """Remove one alert rule, returning True if it existed."""
+        experiment = self.load_experiment(exp_id)
+        if experiment is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        rules = experiment.get("alert_rules", [])
+        remaining = [rule for rule in rules if rule.get("id") != rule_id]
+        if len(remaining) == len(rules):
+            return False
+        experiment["alert_rules"] = remaining
+        self.save_experiment(experiment)
+        return True
+
+    def apply_alert_rules(
+        self, run_data: dict, metric_points: Iterable[dict]
+    ) -> List[dict]:
+        """Evaluate freshly logged metric points against the experiment's rules.
+
+        Appends one alert entry per triggered rule to the run record before
+        persisting it. Returns only the alerts created by this call.
+        """
+        rules = [
+            AlertRule.from_dict(raw)
+            for raw in self.list_alert_rules(run_data["experiment_id"])
+        ]
+        if not rules:
+            return []
+        triggered = []
+        for point in metric_points:
+            value = float(point["value"])
+            for rule in rules:
+                if rule.metric_name == point.get("name") and rule.matches(value):
+                    triggered.append(
+                        {
+                            "rule_id": rule.id,
+                            "metric_name": point.get("name"),
+                            "comparator": rule.comparator,
+                            "threshold": rule.threshold,
+                            "value": value,
+                            "step": point.get("step"),
+                            "triggered_at": datetime.utcnow().isoformat(),
+                        }
+                    )
+        if triggered:
+            run_data.setdefault("alerts", []).extend(triggered)
+            run_data["updated_at"] = datetime.utcnow().isoformat()
+            self.save_run(run_data)
+        return triggered
 
     def export_experiment(self, exp_id: str, destination: Path) -> Path:
         """Export experiment metadata and all run records as one JSON bundle."""

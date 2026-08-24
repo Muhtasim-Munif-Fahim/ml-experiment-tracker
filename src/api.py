@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .models import Experiment, Run, RunStatus, Param, Metric, Artifact, ArtifactType
+from .models import AlertRule, Experiment, Run, RunStatus, Param, Metric, Artifact, ArtifactType
 from .storage import StorageFactory, LocalStorageBackend
 
 
@@ -53,6 +53,12 @@ class MetricCreate(BaseModel):
 class MetricBatchCreate(BaseModel):
     metrics: Dict[str, float] = Field(min_length=1)
     step: Optional[int] = None
+
+
+class AlertRuleCreate(BaseModel):
+    metric_name: str
+    comparator: str
+    threshold: float
 
 
 app = FastAPI(title="ML Experiment Tracker API", version="0.1.0")
@@ -193,9 +199,11 @@ def log_metric(run_id: str, metric: MetricCreate):
     run_data = storage.load_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
-    run_data.setdefault("metrics", []).append(metric.model_dump())
+    point = metric.model_dump()
+    run_data.setdefault("metrics", []).append(point)
     storage.save_run(run_data)
-    return {"message": "Metric logged"}
+    alerts = storage.apply_alert_rules(run_data, [point])
+    return {"message": "Metric logged", "alerts": alerts}
 
 
 @app.post("/runs/{run_id}/metrics/batch", response_model=dict)
@@ -204,7 +212,7 @@ def log_metrics(run_id: str, batch: MetricBatchCreate):
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
     timestamp = datetime.utcnow().isoformat()
-    run_data.setdefault("metrics", []).extend(
+    points = [
         {
             "name": name,
             "value": value,
@@ -212,9 +220,11 @@ def log_metrics(run_id: str, batch: MetricBatchCreate):
             "timestamp": timestamp,
         }
         for name, value in batch.metrics.items()
-    )
+    ]
+    run_data.setdefault("metrics", []).extend(points)
     storage.save_run(run_data)
-    return {"message": "Metrics logged", "count": len(batch.metrics)}
+    alerts = storage.apply_alert_rules(run_data, points)
+    return {"message": "Metrics logged", "count": len(batch.metrics), "alerts": alerts}
 
 
 @app.get("/runs/{run_id}/metrics/{metric_name}", response_model=List[dict])
@@ -227,6 +237,50 @@ def metric_history(run_id: str, metric_name: str):
         for metric in run_data.get("metrics", [])
         if metric.get("name") == metric_name
     ]
+
+
+@app.post("/experiments/{exp_id}/alert-rules", response_model=dict)
+def create_alert_rule(exp_id: str, rule: AlertRuleCreate):
+    """Register a metric threshold rule evaluated as metrics are logged."""
+    if not storage.load_experiment(exp_id):
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    try:
+        alert_rule = AlertRule(
+            metric_name=rule.metric_name,
+            comparator=rule.comparator,
+            threshold=rule.threshold,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return storage.save_alert_rule(exp_id, alert_rule.to_dict())
+
+
+@app.get("/experiments/{exp_id}/alert-rules", response_model=List[dict])
+def list_alert_rules(exp_id: str):
+    try:
+        return storage.list_alert_rules(exp_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+
+
+@app.delete("/experiments/{exp_id}/alert-rules/{rule_id}")
+def delete_alert_rule(exp_id: str, rule_id: str):
+    try:
+        deleted = storage.delete_alert_rule(exp_id, rule_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    return {"message": "Alert rule deleted"}
+
+
+@app.get("/runs/{run_id}/alerts", response_model=List[dict])
+def run_alerts(run_id: str):
+    """Return alerts recorded on a run when logged metrics breached thresholds."""
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run_data.get("alerts", [])
 
 
 @app.get("/experiments/{exp_id}/leaderboard", response_model=List[dict])

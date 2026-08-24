@@ -90,6 +90,30 @@ class ExperimentTrackerClient:
     def update_run(self, run_id: str, updates: dict) -> dict:
         return self._request("PATCH", f"/runs/{run_id}", json=updates)
 
+    def search_runs(
+        self,
+        status: str = None,
+        name_contains: str = None,
+        metric: str = None,
+        min_metric: float = None,
+        max_metric: float = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Find runs across every experiment, newest first, paginated."""
+        params = {"limit": limit, "offset": offset}
+        if status:
+            params["status"] = status
+        if name_contains:
+            params["name_contains"] = name_contains
+        if metric:
+            params["metric"] = metric
+        if min_metric is not None:
+            params["min_metric"] = min_metric
+        if max_metric is not None:
+            params["max_metric"] = max_metric
+        return self._request("GET", "/runs/search", params=params)
+
     def delete_run(self, run_id: str) -> None:
         """Delete a run and its metadata record."""
 

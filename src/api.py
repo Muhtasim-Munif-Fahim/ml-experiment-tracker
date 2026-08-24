@@ -180,6 +180,31 @@ def list_runs(
     return runs[:limit]
 
 
+@app.get("/runs/search", response_model=dict)
+def search_runs(
+    status: Optional[str] = None,
+    name_contains: Optional[str] = None,
+    metric: Optional[str] = None,
+    min_metric: Optional[float] = None,
+    max_metric: Optional[float] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Find runs across every experiment, newest first, paginated."""
+    try:
+        return storage.search_runs(
+            statuses=[status] if status else None,
+            name_contains=name_contains,
+            metric_name=metric,
+            min_metric=min_metric,
+            max_metric=max_metric,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/runs/{run_id}", response_model=dict)
 def get_run(run_id: str):
     run = storage.load_run(run_id)

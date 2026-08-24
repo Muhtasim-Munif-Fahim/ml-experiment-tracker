@@ -138,6 +138,52 @@ class LocalStorageBackend:
                     runs.append(data)
         return runs
 
+    @staticmethod
+    def _validate_metric_filters(
+        metric_name: Optional[str],
+        min_metric: Optional[float],
+        max_metric: Optional[float],
+    ) -> None:
+        if (min_metric is not None or max_metric is not None) and not metric_name:
+            raise ValueError("metric_name is required for metric bounds")
+        if min_metric is not None and max_metric is not None and min_metric > max_metric:
+            raise ValueError("min_metric cannot exceed max_metric")
+
+    @staticmethod
+    def _run_matches_filters(
+        run: dict,
+        *,
+        allowed_statuses: set,
+        required_tags: dict,
+        fragment: Optional[str],
+        metric_name: Optional[str],
+        min_metric: Optional[float],
+        max_metric: Optional[float],
+    ) -> bool:
+        if allowed_statuses and run.get("status") not in allowed_statuses:
+            return False
+        run_tags = run.get("tags", {})
+        if not isinstance(run_tags, dict) or any(
+            run_tags.get(key) != value for key, value in required_tags.items()
+        ):
+            return False
+        if fragment and fragment not in str(run.get("name", "")).casefold():
+            return False
+        if metric_name is not None:
+            metric_values = [
+                metric.get("value")
+                for metric in run.get("metrics", [])
+                if metric.get("name") == metric_name
+            ]
+            if not metric_values:
+                return False
+            latest_metric = float(metric_values[-1])
+            if min_metric is not None and latest_metric < min_metric:
+                return False
+            if max_metric is not None and latest_metric > max_metric:
+                return False
+        return True
+
     def query_runs(
         self,
         experiment_id: str,
@@ -149,45 +195,71 @@ class LocalStorageBackend:
         min_metric: Optional[float] = None,
         max_metric: Optional[float] = None,
     ) -> List[dict]:
-        """Filter runs by metadata and the latest value of one metric."""
+        """Filter runs of one experiment by metadata and latest metric value."""
 
-        if (min_metric is not None or max_metric is not None) and not metric_name:
-            raise ValueError("metric_name is required for metric bounds")
-        if min_metric is not None and max_metric is not None and min_metric > max_metric:
-            raise ValueError("min_metric cannot exceed max_metric")
+        self._validate_metric_filters(metric_name, min_metric, max_metric)
         allowed_statuses = set(statuses or [])
         required_tags = tags or {}
         fragment = name_contains.casefold() if name_contains else None
-        matches = []
-        for run in self.list_runs(experiment_id):
-            if allowed_statuses and run.get("status") not in allowed_statuses:
-                continue
-            run_tags = run.get("tags", {})
-            if not isinstance(run_tags, dict) or any(
-                run_tags.get(key) != value for key, value in required_tags.items()
-            ):
-                continue
-            if fragment and fragment not in str(run.get("name", "")).casefold():
-                continue
-            if metric_name is not None:
-                metric_values = [
-                    metric.get("value")
-                    for metric in run.get("metrics", [])
-                    if metric.get("name") == metric_name
-                ]
-                if not metric_values:
-                    continue
-                latest_metric = float(metric_values[-1])
-                if min_metric is not None and latest_metric < min_metric:
-                    continue
-                if max_metric is not None and latest_metric > max_metric:
-                    continue
-            matches.append(run)
+        matches = [
+            run
+            for run in self.list_runs(experiment_id)
+            if self._run_matches_filters(
+                run,
+                allowed_statuses=allowed_statuses,
+                required_tags=required_tags,
+                fragment=fragment,
+                metric_name=metric_name,
+                min_metric=min_metric,
+                max_metric=max_metric,
+            )
+        ]
         return sorted(
             matches,
             key=lambda run: str(run.get("created_at", "")),
             reverse=True,
         )
+
+    def search_runs(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        tags: Optional[dict[str, str]] = None,
+        name_contains: Optional[str] = None,
+        metric_name: Optional[str] = None,
+        min_metric: Optional[float] = None,
+        max_metric: Optional[float] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Search runs across every experiment, newest first, paginated.
+
+        Returns ``{"total": <all matches>, "runs": [<requested page>]}`` so
+        callers can page without losing count.
+        """
+        self._validate_metric_filters(metric_name, min_metric, max_metric)
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        allowed_statuses = set(statuses or [])
+        required_tags = tags or {}
+        fragment = name_contains.casefold() if name_contains else None
+        matches = []
+        for experiment in self.list_experiments(include_archived=True):
+            for run in self.list_runs(experiment["id"]):
+                if self._run_matches_filters(
+                    run,
+                    allowed_statuses=allowed_statuses,
+                    required_tags=required_tags,
+                    fragment=fragment,
+                    metric_name=metric_name,
+                    min_metric=min_metric,
+                    max_metric=max_metric,
+                ):
+                    matches.append(run)
+        matches.sort(key=lambda run: str(run.get("created_at", "")), reverse=True)
+        return {"total": len(matches), "runs": matches[offset : offset + limit]}
 
     def save_artifact(self, artifact_id: str, file_path: Path) -> str:
         dest = self.artifacts_dir / artifact_id

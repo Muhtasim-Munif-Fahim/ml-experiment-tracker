@@ -461,6 +461,15 @@ def delete_note(run_id: str, note_id: str):
     return {"message": "Note deleted"}
 
 
+@app.get("/runs/{run_id}/snapshot", response_model=dict)
+def run_snapshot(run_id: str):
+    """Return a self-contained JSON snapshot of one run."""
+    try:
+        return storage.build_run_snapshot(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+
+
 # Health check
 @app.get("/health")
 def health_check():

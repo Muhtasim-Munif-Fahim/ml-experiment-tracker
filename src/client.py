@@ -207,6 +207,21 @@ class ExperimentTrackerClient:
     def delete_note(self, run_id: str, note_id: str) -> dict:
         return self._request("DELETE", f"/runs/{run_id}/notes/{note_id}")
 
+    def run_snapshot(self, run_id: str) -> dict:
+        """Fetch a self-contained JSON snapshot of one run."""
+        return self._request("GET", f"/runs/{run_id}/snapshot")
+
+    def export_run_snapshot(self, run_id: str, destination: str) -> str:
+        """Save one run's snapshot to a local JSON file and return the path."""
+        snapshot = self.run_snapshot(run_id)
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
 
 class ExperimentContext:
     """Context manager for running an experiment."""

@@ -15,6 +15,7 @@ from typing import Any, BinaryIO, Iterable, List, Optional
 from .models import AlertRule, Run, Experiment, Artifact
 
 EXPERIMENT_BUNDLE_VERSION = 1
+RUN_SNAPSHOT_VERSION = 1
 
 
 class StorageBackend(ABC):
@@ -504,6 +505,45 @@ class LocalStorageBackend:
         for run in runs:
             self.save_run(run)
         return exp_id
+
+
+    def build_run_snapshot(self, run_id: str) -> dict:
+        """Assemble a self-contained JSON snapshot of one run."""
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        experiment = self.load_experiment(run.get("experiment_id", ""))
+        return {
+            "schema_version": RUN_SNAPSHOT_VERSION,
+            "snapshot_type": "run",
+            "generated_at": datetime.utcnow().isoformat(),
+            "experiment": (
+                {"id": experiment["id"], "name": experiment.get("name", "")}
+                if experiment
+                else None
+            ),
+            "run": run,
+            "artifact_manifest": [
+                {
+                    "name": artifact.get("name"),
+                    "type": artifact.get("type"),
+                    "size_bytes": artifact.get("size_bytes", artifact.get("size")),
+                    "checksum_sha256": artifact.get("checksum_sha256"),
+                }
+                for artifact in run.get("artifacts", [])
+            ],
+        }
+
+    def export_run_snapshot(self, run_id: str, destination: Path) -> Path:
+        """Write one run's snapshot as a standalone JSON file."""
+        payload = self.build_run_snapshot(run_id)
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",
+            encoding="utf-8",
+        )
+        return target
 
 
 class S3StorageBackend:

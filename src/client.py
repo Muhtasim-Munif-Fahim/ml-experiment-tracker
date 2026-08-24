@@ -140,6 +140,14 @@ class ExperimentTrackerClient:
     def list_artifacts(self, run_id: str) -> List[dict]:
         return self._request("GET", f"/runs/{run_id}/artifacts/")
 
+    def download_artifact(self, run_id: str, artifact_ref: str, destination: Optional[str] = None) -> bytes:
+        """Download stored artifact bytes, optionally saving them to a path."""
+        response = self.session.get(f"{self.base_url}/runs/{run_id}/artifacts/{artifact_ref}")
+        response.raise_for_status()
+        if destination:
+            Path(destination).write_bytes(response.content)
+        return response.content
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

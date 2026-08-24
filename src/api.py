@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .models import AlertRule, Experiment, Run, RunStatus, Param, Metric, Artifact, ArtifactType
@@ -336,7 +338,9 @@ def upload_artifact(run_id: str, name: str = Form(...), artifact_type: str = For
         checksum_sha256=storage.artifact_checksum(artifact_path),
         metadata=json.loads(metadata)
     )
-    run_data.setdefault("artifacts", []).append(artifact.to_dict())
+    entry = artifact.to_dict()
+    entry["artifact_id"] = artifact_id
+    run_data.setdefault("artifacts", []).append(entry)
     storage.save_run(run_data)
     return {
         "artifact_id": artifact_id,
@@ -351,6 +355,38 @@ def list_artifacts(run_id: str):
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_data.get("artifacts", [])
+
+
+@app.get("/runs/{run_id}/artifacts/{artifact_ref}")
+def download_artifact(run_id: str, artifact_ref: str):
+    """Serve stored artifact bytes by artifact id (or name) with its content type."""
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    entry = next(
+        (
+            artifact
+            for artifact in run_data.get("artifacts", [])
+            if artifact.get("artifact_id") == artifact_ref
+            or artifact.get("name") == artifact_ref
+        ),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    file_path = Path(entry["path"])
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file missing")
+    filename = entry.get("name") or file_path.name
+    headers = {}
+    if entry.get("checksum_sha256"):
+        headers["X-Artifact-Sha256"] = entry["checksum_sha256"]
+    return FileResponse(
+        file_path,
+        media_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
+        filename=filename,
+        headers=headers,
+    )
 
 
 # Health check

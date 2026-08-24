@@ -84,8 +84,8 @@ def create_experiment(exp: ExperimentCreate):
 
 
 @app.get("/experiments/", response_model=List[dict])
-def list_experiments(limit: int = 100, offset: int = 0):
-    exps = storage.list_experiments()
+def list_experiments(limit: int = 100, offset: int = 0, include_archived: bool = False):
+    exps = storage.list_experiments(include_archived=include_archived)
     return exps[offset:offset+limit]
 
 
@@ -117,6 +117,23 @@ def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp["updated_at"] = datetime.utcnow().isoformat()
     storage.save_experiment(exp)
     return exp
+
+
+@app.post("/experiments/{exp_id}/archive", response_model=dict)
+def archive_experiment(exp_id: str):
+    """Soft-archive an experiment so default listings skip it."""
+    experiment = storage.set_experiment_archived(exp_id, archived=True)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return experiment
+
+
+@app.post("/experiments/{exp_id}/unarchive", response_model=dict)
+def unarchive_experiment(exp_id: str):
+    experiment = storage.set_experiment_archived(exp_id, archived=False)
+    if not experiment:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return experiment
 
 
 @app.delete("/experiments/{exp_id}")

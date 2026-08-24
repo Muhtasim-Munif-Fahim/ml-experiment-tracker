@@ -287,6 +287,7 @@ class Experiment:
     name: str
     description: str = ""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    archived: bool = False
     tags: List[str] = field(default_factory=list)
     runs: List[Run] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -496,6 +497,7 @@ class Experiment:
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "archived": self.archived,
             "tags": self.tags,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -504,7 +506,13 @@ class Experiment:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Experiment":
-        exp = cls(id=data["id"], name=data["name"], description=data.get("description", ""), tags=data.get("tags", []))
+        exp = cls(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            archived=bool(data.get("archived", False)),
+            tags=data.get("tags", []),
+        )
         exp.created_at = datetime.fromisoformat(data["created_at"])
         exp.updated_at = datetime.fromisoformat(data["updated_at"])
         exp.runs = [Run.from_dict(r) for r in data.get("runs", [])]

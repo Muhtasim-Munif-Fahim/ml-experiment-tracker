@@ -39,8 +39,19 @@ class ExperimentTrackerClient:
 
         return self._request("GET", f"/experiments/{exp_id}/summary")
 
-    def list_experiments(self, limit: int = 100, offset: int = 0) -> List[dict]:
-        return self._request("GET", "/experiments/", params={"limit": limit, "offset": offset})
+    def list_experiments(
+        self, limit: int = 100, offset: int = 0, include_archived: bool = False
+    ) -> List[dict]:
+        params = {"limit": limit, "offset": offset, "include_archived": include_archived}
+        return self._request("GET", "/experiments/", params=params)
+
+    def archive_experiment(self, exp_id: str) -> dict:
+        """Soft-archive an experiment so default listings skip it."""
+        return self._request("POST", f"/experiments/{exp_id}/archive")
+
+    def unarchive_experiment(self, exp_id: str) -> dict:
+        """Restore a soft-archived experiment to active."""
+        return self._request("POST", f"/experiments/{exp_id}/unarchive")
 
     def update_experiment(self, exp_id: str, updates: dict) -> dict:
         return self._request("PATCH", f"/experiments/{exp_id}", json=updates)

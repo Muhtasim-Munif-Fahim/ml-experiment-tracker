@@ -28,7 +28,7 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def list_experiments(self) -> List[dict]:
+    def list_experiments(self, include_archived: bool = False) -> List[dict]:
         pass
 
     @abstractmethod
@@ -84,12 +84,25 @@ class LocalStorageBackend:
         with open(path) as f:
             return json.load(f)
 
-    def list_experiments(self) -> List[dict]:
-        exps = []
+    def list_experiments(self, include_archived: bool = False) -> List[dict]:
+        experiments = []
         for path in self.experiments_dir.glob("*.json"):
             with open(path) as f:
-                exps.append(json.load(f))
-        return exps
+                experiment = json.load(f)
+            if not include_archived and experiment.get("archived"):
+                continue
+            experiments.append(experiment)
+        return experiments
+
+    def set_experiment_archived(self, exp_id: str, archived: bool = True) -> Optional[dict]:
+        """Mark an experiment archived or active without deleting its records."""
+        experiment = self.load_experiment(exp_id)
+        if experiment is None:
+            return None
+        experiment["archived"] = bool(archived)
+        experiment["updated_at"] = datetime.utcnow().isoformat()
+        self.save_experiment(experiment)
+        return experiment
 
     def save_run(self, run_data: dict) -> None:
         path = self._run_path(run_data["id"])
@@ -384,7 +397,7 @@ class S3StorageBackend:
     def load_experiment(self, exp_id: str) -> Optional[dict]:
         raise NotImplementedError
 
-    def list_experiments(self) -> List[dict]:
+    def list_experiments(self, include_archived: bool = False) -> List[dict]:
         raise NotImplementedError
 
     def save_run(self, run_data: dict) -> None:

@@ -114,6 +114,37 @@ class ExperimentTrackerClient:
             params["max_metric"] = max_metric
         return self._request("GET", "/runs/search", params=params)
 
+    def search_runs_csv(
+        self,
+        status: str = None,
+        name_contains: str = None,
+        metric: str = None,
+        min_metric: float = None,
+        max_metric: float = None,
+        limit: int = 50,
+        offset: int = 0,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch one search page as CSV text, optionally saving it to a file."""
+        params = {"limit": limit, "offset": offset}
+        if status:
+            params["status"] = status
+        if name_contains:
+            params["name_contains"] = name_contains
+        if metric:
+            params["metric"] = metric
+        if min_metric is not None:
+            params["min_metric"] = min_metric
+        if max_metric is not None:
+            params["max_metric"] = max_metric
+        response = self.session.get(f"{self.base_url}/runs/search.csv", params=params)
+        response.raise_for_status()
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(response.content)
+        return response.text
+
     def delete_run(self, run_id: str) -> None:
         """Delete a run and its metadata record."""
 
@@ -153,6 +184,26 @@ class ExperimentTrackerClient:
             f"/experiments/{exp_id}/leaderboard",
             params={"metric": metric, "maximize": maximize, "limit": limit},
         )
+
+    def run_leaderboard_csv(
+        self,
+        exp_id: str,
+        metric: str,
+        maximize: bool = True,
+        limit: int = 10,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch the metric leaderboard as CSV text, optionally saving it."""
+        response = self.session.get(
+            f"{self.base_url}/experiments/{exp_id}/leaderboard.csv",
+            params={"metric": metric, "maximize": maximize, "limit": limit},
+        )
+        response.raise_for_status()
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(response.content)
+        return response.text
 
     def upload_artifact(self, run_id: str, name: str, artifact_type: str, file_path: str, metadata: dict = None) -> dict:
         import mimetypes

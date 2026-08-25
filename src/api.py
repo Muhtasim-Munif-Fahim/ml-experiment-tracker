@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import mimetypes
 import uuid
@@ -11,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from .models import AlertRule, Experiment, Run, RunStatus, Param, Metric, Artifact, ArtifactType
@@ -79,6 +81,15 @@ app.add_middleware(
 
 
 storage = StorageFactory.create("local", base_path="./mlruns")
+
+
+def render_csv(columns: List[str], rows: List[List[Any]]) -> str:
+    """Serialize table rows to CSV text using RFC 4180 quoting."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(columns)
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
 # Experiment endpoints
@@ -203,6 +214,39 @@ def search_runs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/runs/search.csv")
+def search_runs_csv(
+    status: Optional[str] = None,
+    name_contains: Optional[str] = None,
+    metric: Optional[str] = None,
+    min_metric: Optional[float] = None,
+    max_metric: Optional[float] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Download one cross-experiment search page as CSV with fixed columns."""
+    try:
+        result = storage.search_runs(
+            statuses=[status] if status else None,
+            name_contains=name_contains,
+            metric_name=metric,
+            min_metric=min_metric,
+            max_metric=max_metric,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    columns = ["experiment_id", "run_id", "name", "status", "created_at", "updated_at"]
+    fields = ["experiment_id", "id", "name", "status", "created_at", "updated_at"]
+    rows = [[run.get(field) for field in fields] for run in result["runs"]]
+    return Response(
+        content=render_csv(columns, rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="run-search.csv"'},
+    )
 
 
 @app.get("/runs/{run_id}", response_model=dict)
@@ -345,6 +389,31 @@ def run_leaderboard(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/experiments/{exp_id}/leaderboard.csv")
+def run_leaderboard_csv(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+    limit: int = Query(10, ge=1),
+):
+    """Download the metric leaderboard as CSV with one-based rank numbers."""
+    try:
+        ranked = storage.run_leaderboard(
+            exp_id, metric, maximize=maximize, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    rows = [
+        [rank, entry["run_id"], entry["name"], entry["value"], entry["step"]]
+        for rank, entry in enumerate(ranked, start=1)
+    ]
+    return Response(
+        content=render_csv(["rank", "run_id", "name", "value", "step"], rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="leaderboard.csv"'},
+    )
 
 
 @app.post("/runs/{run_id}/artifacts", response_model=dict)

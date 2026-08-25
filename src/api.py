@@ -16,7 +16,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from .models import AlertRule, Experiment, Run, RunStatus, Param, Metric, Artifact, ArtifactType
+from .models import (
+    AlertRule,
+    Experiment,
+    Run,
+    RunStatus,
+    Param,
+    Metric,
+    Artifact,
+    ArtifactType,
+    parse_run_status,
+    validate_status_transition,
+)
 from .storage import StorageFactory, LocalStorageBackend
 
 
@@ -262,7 +273,24 @@ def update_run(run_id: str, updates: RunUpdate):
     run_data = storage.load_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
-    for key, value in updates.model_dump(exclude_unset=True).items():
+    changes = updates.model_dump(exclude_unset=True)
+    if "status" in changes:
+        try:
+            current_status = parse_run_status(run_data.get("status", RunStatus.RUNNING.value))
+            target_status = parse_run_status(changes["status"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            validate_status_transition(current_status, target_status)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        changes["status"] = target_status.value
+        if (
+            target_status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.ABORTED)
+            and not run_data.get("finished_at")
+        ):
+            changes["finished_at"] = datetime.utcnow().isoformat()
+    for key, value in changes.items():
         run_data[key] = value
     run_data["updated_at"] = datetime.utcnow().isoformat()
     storage.save_run(run_data)

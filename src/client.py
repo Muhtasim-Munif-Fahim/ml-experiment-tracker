@@ -90,6 +90,13 @@ class ExperimentTrackerClient:
     def update_run(self, run_id: str, updates: dict) -> dict:
         return self._request("PATCH", f"/runs/{run_id}", json=updates)
 
+    def set_run_status(self, run_id: str, status: str, error: Optional[str] = None) -> dict:
+        """Move a run through the declared lifecycle; illegal moves fail with 409."""
+        payload: Dict[str, Any] = {"status": status}
+        if error is not None:
+            payload["error"] = error
+        return self._request("PATCH", f"/runs/{run_id}", json=payload)
+
     def search_runs(
         self,
         status: str = None,

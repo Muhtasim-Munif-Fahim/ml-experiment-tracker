@@ -17,6 +17,32 @@ class RunStatus(str, Enum):
     ABORTED = "aborted"
 
 
+RUN_STATUS_TRANSITIONS = {
+    RunStatus.RUNNING: frozenset({RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.ABORTED}),
+    RunStatus.FAILED: frozenset({RunStatus.RUNNING}),
+    RunStatus.ABORTED: frozenset({RunStatus.RUNNING}),
+    RunStatus.COMPLETED: frozenset(),
+}
+
+
+def parse_run_status(value: Any) -> RunStatus:
+    """Coerce a raw stored or request value into a RunStatus."""
+    try:
+        return RunStatus(value)
+    except ValueError as exc:
+        raise ValueError(f"unknown run status: {value!r}") from exc
+
+
+def validate_status_transition(current: RunStatus, target: RunStatus) -> None:
+    """Reject moves outside the declared map; restating a status is a no-op."""
+    if target is current:
+        return
+    if target not in RUN_STATUS_TRANSITIONS[current]:
+        raise ValueError(
+            f"run status cannot move from '{current.value}' to '{target.value}'"
+        )
+
+
 class ArtifactType(str, Enum):
     MODEL = "model"
     DATASET = "dataset"

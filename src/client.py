@@ -45,6 +45,11 @@ class ExperimentTrackerClient:
         params = {"limit": limit, "offset": offset, "include_archived": include_archived}
         return self._request("GET", "/experiments/", params=params)
 
+    def experiment_artifacts(self, exp_id: str, limit: int = 50, offset: int = 0) -> dict:
+        """Page through artifacts recorded across an experiment's runs."""
+        params = {"limit": limit, "offset": offset}
+        return self._request("GET", f"/experiments/{exp_id}/artifacts", params=params)
+
     def archive_experiment(self, exp_id: str) -> dict:
         """Soft-archive an experiment so default listings skip it."""
         return self._request("POST", f"/experiments/{exp_id}/archive")

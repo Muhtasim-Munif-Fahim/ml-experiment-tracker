@@ -133,6 +133,34 @@ def experiment_summary(exp_id: str):
     exp_data = dict(exp_data)
     exp_data["runs"] = storage.list_runs(exp_id)
     return Experiment.from_dict(exp_data).summary()
+@app.get("/experiments/{exp_id}/artifacts", response_model=dict)
+def experiment_artifacts(exp_id: str, limit: int = 50, offset: int = 0):
+    """Page through artifacts recorded across every run of an experiment."""
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be positive")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be non-negative")
+    try:
+        inventory = storage.experiment_artifacts(exp_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    page = inventory[offset : offset + limit]
+    return {
+        "total": len(inventory),
+        "artifacts": [
+            {
+                "run_id": entry.get("run_id"),
+                "run_name": entry.get("run_name"),
+                "artifact_id": entry.get("artifact_id"),
+                "name": entry.get("name"),
+                "type": entry.get("type"),
+                "size_bytes": entry.get("size_bytes", entry.get("size")),
+                "sha256_prefix": str(entry.get("checksum_sha256") or "")[:12],
+                "created_at": entry.get("created_at"),
+            }
+            for entry in page
+        ],
+    }
 
 
 @app.patch("/experiments/{exp_id}", response_model=dict)

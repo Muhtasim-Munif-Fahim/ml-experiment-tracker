@@ -262,6 +262,27 @@ class LocalStorageBackend:
         matches.sort(key=lambda run: str(run.get("created_at", "")), reverse=True)
         return {"total": len(matches), "runs": matches[offset : offset + limit]}
 
+    def experiment_artifacts(self, exp_id: str) -> List[dict]:
+        """Collect artifact records across every run of an experiment.
+
+        Runs are ordered newest first, mirroring ``query_runs``. Each entry
+        carries the owning run id and name alongside the artifact record.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        runs = sorted(
+            self.list_runs(exp_id),
+            key=lambda run: str(run.get("created_at", "")),
+            reverse=True,
+        )
+        inventory = []
+        for run in runs:
+            for artifact in run.get("artifacts", []):
+                entry = dict(artifact)
+                entry["run_id"] = run.get("id")
+                entry["run_name"] = run.get("name")
+                inventory.append(entry)
+        return inventory
     def save_artifact(self, artifact_id: str, file_path: Path) -> str:
         dest = self.artifacts_dir / artifact_id
         dest.parent.mkdir(parents=True, exist_ok=True)

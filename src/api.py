@@ -6,14 +6,15 @@ import csv
 import io
 import json
 import mimetypes
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, Form, Request, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .models import (
@@ -92,6 +93,21 @@ app.add_middleware(
 
 
 storage = StorageFactory.create("local", base_path="./mlruns")
+API_TOKEN_ENV_VAR = "MLTRACKER_API_TOKEN"
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    """Reject requests lacking the bearer token when one is configured."""
+    expected = os.environ.get(API_TOKEN_ENV_VAR)
+    if not expected or request.url.path == "/health":
+        return await call_next(request)
+    if request.headers.get("authorization") != f"Bearer {expected}":
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing or invalid API token"},
+        )
+    return await call_next(request)
 
 
 def render_csv(columns: List[str], rows: List[List[Any]]) -> str:

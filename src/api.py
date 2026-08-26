@@ -26,6 +26,7 @@ from .models import (
     Metric,
     Artifact,
     ArtifactType,
+    lttb_downsample,
     parse_run_status,
     validate_status_transition,
 )
@@ -401,6 +402,24 @@ def metric_history(run_id: str, metric_name: str):
         for metric in run_data.get("metrics", [])
         if metric.get("name") == metric_name
     ]
+
+
+@app.get("/runs/{run_id}/metrics/{metric_name}/downsample", response_model=List[dict])
+def downsample_metric_history(
+    run_id: str,
+    metric_name: str,
+    points: int = Query(..., ge=2),
+):
+    """Return a long metric series reduced to ``points`` shape-preserving samples."""
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    series = [
+        metric
+        for metric in run_data.get("metrics", [])
+        if metric.get("name") == metric_name
+    ]
+    return lttb_downsample(series, points)
 
 
 @app.post("/experiments/{exp_id}/alert-rules", response_model=dict)

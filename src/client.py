@@ -182,6 +182,14 @@ class ExperimentTrackerClient:
 
         return self._request("GET", f"/runs/{run_id}/metrics/{metric_name}")
 
+    def downsample_metric(self, run_id: str, metric_name: str, points: int) -> List[dict]:
+        """Fetch a metric series reduced to ``points`` shape-preserving samples."""
+        return self._request(
+            "GET",
+            f"/runs/{run_id}/metrics/{metric_name}/downsample",
+            params={"points": points},
+        )
+
     def run_leaderboard(
         self,
         exp_id: str,

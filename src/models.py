@@ -74,6 +74,54 @@ class Metric:
         }
 
 
+def lttb_downsample(series: List[dict], points: int) -> List[dict]:
+    """Reduce a metric series to ``points`` samples with largest-triangle buckets.
+
+    Keeps the first and last points, then fills the remaining buckets with
+    the samples forming the largest triangle against the previously chosen
+    point and the average of the next bucket, so spikes and trend shape
+    survive aggressive reduction. Series already at or below ``points`` are
+    returned as copies.
+    """
+    if points < 2:
+        raise ValueError("points must be at least 2")
+    total = len(series)
+    if total <= points:
+        return [dict(sample) for sample in series]
+
+    sampled = [dict(series[0])]
+    every = (total - 2) / (points - 2)
+    anchor_x = 0.0
+    anchor_y = float(series[0]["value"])
+    for index in range(1, points - 1):
+        bucket_start = int((index - 1) * every) + 1
+        bucket_end = int(index * every) + 1
+        next_start = int(index * every) + 1
+        next_end = min(int((index + 1) * every) + 1, total)
+        next_bucket = series[next_start:next_end]
+        avg_x = (next_start + (next_end - 1)) / 2.0
+        avg_y = sum(float(sample["value"]) for sample in next_bucket) / len(next_bucket)
+
+        best_index = bucket_start
+        best_area = -1.0
+        for position in range(bucket_start, bucket_end):
+            x = float(position)
+            y = float(series[position]["value"])
+            area = abs(
+                (anchor_x - avg_x) * (y - anchor_y)
+                - (anchor_x - x) * (avg_y - anchor_y)
+            )
+            if area > best_area:
+                best_area = area
+                best_index = position
+        sampled.append(dict(series[best_index]))
+        anchor_x = float(best_index)
+        anchor_y = float(series[best_index]["value"])
+
+    sampled.append(dict(series[-1]))
+    return sampled
+
+
 @dataclass
 class Artifact:
     name: str

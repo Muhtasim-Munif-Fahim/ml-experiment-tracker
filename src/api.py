@@ -61,6 +61,14 @@ class RunCompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class SweepCreate(BaseModel):
+    name_template: str = 'sweep-{index}'
+    param_grid: Dict[str, List[Any]]
+    base_params: Dict[str, Any] = Field(default_factory=dict)
+    base_tags: Dict[str, str] = Field(default_factory=dict)
+    base_name: Optional[str] = None
+
+
 class ParamCreate(BaseModel):
     name: str
     value: Any
@@ -228,6 +236,49 @@ def create_run(exp_id: str, run: RunCreate):
     run = Run(experiment_id=exp_id, name=run.name, params=run.params, tags=run.tags)
     storage.save_run(run.to_dict())
     return run.to_dict()
+
+
+@app.post("/experiments/{exp_id}/runs/sweep", response_model=List[dict])
+def create_sweep_runs(exp_id: str, sweep: SweepCreate):
+    """Create multiple runs from a parameter grid (grid search)."""
+    exp = storage.load_experiment(exp_id)
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    
+    import itertools
+    
+    # Generate all combinations from the parameter grid
+    param_names = list(sweep.param_grid.keys())
+    param_values = list(sweep.param_grid.values())
+    
+    if not param_names:
+        raise HTTPException(status_code=400, detail="param_grid must not be empty")
+    
+    combinations = list(itertools.product(*param_values))
+    if len(combinations) > 1000:
+        raise HTTPException(status_code=400, detail="Too many combinations (max 1000)")
+    
+    created_runs = []
+    for index, combo in enumerate(combinations):
+        run_params = dict(sweep.base_params)
+        for name, value in zip(param_names, combo):
+            run_params[name] = value
+        
+        run_tags = dict(sweep.base_tags)
+        run_tags['sweep_index'] = str(index)
+        
+        run_name = sweep.base_name or sweep.name_template.format(index=index)
+        
+        run = Run(
+            experiment_id=exp_id,
+            name=run_name,
+            params=run_params,
+            tags=run_tags,
+        )
+        storage.save_run(run.to_dict())
+        created_runs.append(run.to_dict())
+    
+    return created_runs
 
 
 @app.get("/experiments/{exp_id}/runs/", response_model=List[dict])

@@ -69,6 +69,26 @@ class ExperimentTrackerClient:
         data = {"name": name, "params": params or {}, "tags": tags or {}}
         return self._request("POST", f"/experiments/{exp_id}/runs/", json=data)
 
+    def create_sweep(
+        self,
+        exp_id: str,
+        param_grid: Dict[str, List[Any]],
+        base_params: Dict[str, Any] = None,
+        base_tags: Dict[str, str] = None,
+        name_template: str = "sweep-{index}",
+        base_name: str = None,
+    ) -> List[dict]:
+        """Create multiple runs from a parameter grid (grid search)."""
+        data = {
+            "param_grid": param_grid,
+            "base_params": base_params or {},
+            "base_tags": base_tags or {},
+            "name_template": name_template,
+        }
+        if base_name:
+            data["base_name"] = base_name
+        return self._request("POST", f"/experiments/{exp_id}/runs/sweep", json=data)
+
     def get_run(self, run_id: str) -> dict:
         return self._request("GET", f"/runs/{run_id}")
 

@@ -126,6 +126,13 @@ class ExperimentTrackerClient:
             params["max_metric"] = max_metric
         return self._request("GET", "/runs/search", params=params)
 
+    def compare_runs(self, exp_id: str, baseline_run_id: str, candidate_run_id: str) -> dict:
+        """Compare parameters and latest metric values between two runs."""
+        return self._request("POST", f"/experiments/{exp_id}/runs/compare", json={
+            "baseline_run_id": baseline_run_id,
+            "candidate_run_id": candidate_run_id
+        })
+
     def search_runs_csv(
         self,
         status: str = None,

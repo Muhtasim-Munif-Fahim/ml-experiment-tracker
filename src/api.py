@@ -56,6 +56,11 @@ class RunUpdate(BaseModel):
     error: Optional[str] = None
 
 
+class RunCompareRequest(BaseModel):
+    baseline_run_id: str
+    candidate_run_id: str
+
+
 class ParamCreate(BaseModel):
     name: str
     value: Any
@@ -505,6 +510,19 @@ def run_leaderboard_csv(
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="leaderboard.csv"'},
     )
+
+
+@app.post("/experiments/{exp_id}/runs/compare", response_model=dict)
+def compare_runs_endpoint(exp_id: str, request: RunCompareRequest):
+    """Compare parameters and latest metric values between two runs."""
+    exp_data = storage.load_experiment(exp_id)
+    if not exp_data:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    exp = Experiment.from_dict(exp_data)
+    try:
+        return exp.compare_runs(request.baseline_run_id, request.candidate_run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/runs/{run_id}/artifacts", response_model=dict)

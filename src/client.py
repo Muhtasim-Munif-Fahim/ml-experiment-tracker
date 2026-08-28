@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,22 +27,63 @@ class PaginatedList(list):
 class ExperimentTrackerClient:
     """Client for interacting with ML Experiment Tracker server."""
 
-    def __init__(self, base_url: str = "http://localhost:8000", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: Optional[str] = None,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5,
+    ):
+        if (
+            not isinstance(max_retries, int)
+            or isinstance(max_retries, bool)
+            or not 0 <= max_retries <= 10
+        ):
+            raise ValueError("max_retries must be an integer between 0 and 10")
+        if backoff_factor < 0:
+            raise ValueError("backoff_factor must be non-negative")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
         self.session = requests.Session()
         if api_key:
             self.session.headers["Authorization"] = f"Bearer {api_key}"
 
-    def _request(self, method: str, endpoint: str, **kwargs) -> dict:
+    def _retry_delay(self, response: "requests.Response", attempt: int) -> float:
+        """Seconds to wait before the next attempt, from Retry-After or backoff."""
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass
+            try:
+                parsed = parsedate_to_datetime(retry_after)
+                delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+                return max(0.0, delta)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return self.backoff_factor * (2 ** attempt)
+
+    def _request_raw(self, method: str, endpoint: str, **kwargs) -> "requests.Response":
+        """Send a request, retrying transient 5xx responses with capped backoff."""
         url = f"{self.base_url}{endpoint}"
-        response = self.session.request(method, url, **kwargs)
+        attempt = 0
+        while True:
+            response = self.session.request(method, url, **kwargs)
+            if response.status_code < 500 or attempt >= self.max_retries:
+                return response
+            time.sleep(self._retry_delay(response, attempt))
+            attempt += 1
+
+    def _request(self, method: str, endpoint: str, **kwargs) -> dict:
+        response = self._request_raw(method, endpoint, **kwargs)
         response.raise_for_status()
         return response.json()
 
     def _request_page(self, method: str, endpoint: str, **kwargs) -> PaginatedList:
-        url = f"{self.base_url}{endpoint}"
-        response = self.session.request(method, url, **kwargs)
+        response = self._request_raw(method, endpoint, **kwargs)
         response.raise_for_status()
         return PaginatedList(response.json(), total=response.headers.get("X-Total-Count"))
 
@@ -195,7 +238,7 @@ class ExperimentTrackerClient:
             params["min_metric"] = min_metric
         if max_metric is not None:
             params["max_metric"] = max_metric
-        response = self.session.get(f"{self.base_url}/runs/search.csv", params=params)
+        response = self._request_raw("GET", "/runs/search.csv", params=params)
         response.raise_for_status()
         if destination:
             path = Path(destination)
@@ -260,8 +303,9 @@ class ExperimentTrackerClient:
         destination: Optional[str] = None,
     ) -> str:
         """Fetch the metric leaderboard as CSV text, optionally saving it."""
-        response = self.session.get(
-            f"{self.base_url}/experiments/{exp_id}/leaderboard.csv",
+        response = self._request_raw(
+            "GET",
+            f"/experiments/{exp_id}/leaderboard.csv",
             params={"metric": metric, "maximize": maximize, "limit": limit},
         )
         response.raise_for_status()
@@ -287,7 +331,7 @@ class ExperimentTrackerClient:
 
     def download_artifact(self, run_id: str, artifact_ref: str, destination: Optional[str] = None) -> bytes:
         """Download stored artifact bytes, optionally saving them to a path."""
-        response = self.session.get(f"{self.base_url}/runs/{run_id}/artifacts/{artifact_ref}")
+        response = self._request_raw("GET", f"/runs/{run_id}/artifacts/{artifact_ref}")
         response.raise_for_status()
         if destination:
             Path(destination).write_bytes(response.content)

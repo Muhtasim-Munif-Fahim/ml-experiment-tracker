@@ -10,6 +10,18 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
+class PaginatedList(list):
+    """A list page that also carries the server-reported total count.
+
+    Behaves exactly like a plain list so existing callers keep working,
+    while ``total`` exposes how many records match the query in full.
+    """
+
+    def __init__(self, items: List[dict], total: Optional[int] = None):
+        super().__init__(items)
+        self.total = int(total) if total is not None else len(items)
+
+
 class ExperimentTrackerClient:
     """Client for interacting with ML Experiment Tracker server."""
 
@@ -26,6 +38,12 @@ class ExperimentTrackerClient:
         response.raise_for_status()
         return response.json()
 
+    def _request_page(self, method: str, endpoint: str, **kwargs) -> PaginatedList:
+        url = f"{self.base_url}{endpoint}"
+        response = self.session.request(method, url, **kwargs)
+        response.raise_for_status()
+        return PaginatedList(response.json(), total=response.headers.get("X-Total-Count"))
+
     # Experiment methods
     def create_experiment(self, name: str, description: str = "", tags: List[str] = None) -> dict:
         data = {"name": name, "description": description, "tags": tags or []}
@@ -41,9 +59,9 @@ class ExperimentTrackerClient:
 
     def list_experiments(
         self, limit: int = 100, offset: int = 0, include_archived: bool = False
-    ) -> List[dict]:
+    ) -> PaginatedList:
         params = {"limit": limit, "offset": offset, "include_archived": include_archived}
-        return self._request("GET", "/experiments/", params=params)
+        return self._request_page("GET", "/experiments/", params=params)
 
     def experiment_artifacts(self, exp_id: str, limit: int = 50, offset: int = 0) -> dict:
         """Page through artifacts recorded across an experiment's runs."""
@@ -96,12 +114,13 @@ class ExperimentTrackerClient:
         self,
         exp_id: str,
         limit: int = 50,
+        offset: int = 0,
         status: str = None,
         metric: str = None,
         min_metric: float = None,
         max_metric: float = None,
-    ) -> List[dict]:
-        params = {"limit": limit}
+    ) -> PaginatedList:
+        params = {"limit": limit, "offset": offset}
         if status:
             params["status"] = status
         if metric:
@@ -110,7 +129,7 @@ class ExperimentTrackerClient:
             params["min_metric"] = min_metric
         if max_metric is not None:
             params["max_metric"] = max_metric
-        return self._request("GET", f"/experiments/{exp_id}/runs/", params=params)
+        return self._request_page("GET", f"/experiments/{exp_id}/runs/", params=params)
 
     def update_run(self, run_id: str, updates: dict) -> dict:
         return self._request("PATCH", f"/runs/{run_id}", json=updates)
@@ -259,8 +278,12 @@ class ExperimentTrackerClient:
             data = {"name": name, "artifact_type": artifact_type, "metadata": json.dumps(metadata or {})}
             return self._request("POST", f"/runs/{run_id}/artifacts", data=data, files=files)
 
-    def list_artifacts(self, run_id: str) -> List[dict]:
-        return self._request("GET", f"/runs/{run_id}/artifacts/")
+    def list_artifacts(self, run_id: str, limit: int = 50, offset: int = 0) -> PaginatedList:
+        return self._request_page(
+            "GET",
+            f"/runs/{run_id}/artifacts/",
+            params={"limit": limit, "offset": offset},
+        )
 
     def download_artifact(self, run_id: str, artifact_ref: str, destination: Optional[str] = None) -> bytes:
         """Download stored artifact bytes, optionally saving them to a path."""

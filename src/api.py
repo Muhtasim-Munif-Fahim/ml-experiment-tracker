@@ -142,9 +142,19 @@ def create_experiment(exp: ExperimentCreate):
 
 
 @app.get("/experiments/", response_model=List[dict])
-def list_experiments(limit: int = 100, offset: int = 0, include_archived: bool = False):
+def list_experiments(
+    limit: int = 100,
+    offset: int = 0,
+    include_archived: bool = False,
+    response: Response = None,
+):
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be positive")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be non-negative")
     exps = storage.list_experiments(include_archived=include_archived)
-    return exps[offset:offset+limit]
+    response.headers["X-Total-Count"] = str(len(exps))
+    return exps[offset:offset + limit]
 
 
 @app.get("/experiments/{exp_id}", response_model=dict)
@@ -164,7 +174,9 @@ def experiment_summary(exp_id: str):
     exp_data["runs"] = storage.list_runs(exp_id)
     return Experiment.from_dict(exp_data).summary()
 @app.get("/experiments/{exp_id}/artifacts", response_model=dict)
-def experiment_artifacts(exp_id: str, limit: int = 50, offset: int = 0):
+def experiment_artifacts(
+    exp_id: str, limit: int = 50, offset: int = 0, response: Response = None
+):
     """Page through artifacts recorded across every run of an experiment."""
     if limit < 1:
         raise HTTPException(status_code=400, detail="limit must be positive")
@@ -174,6 +186,7 @@ def experiment_artifacts(exp_id: str, limit: int = 50, offset: int = 0):
         inventory = storage.experiment_artifacts(exp_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    response.headers["X-Total-Count"] = str(len(inventory))
     page = inventory[offset : offset + limit]
     return {
         "total": len(inventory),
@@ -285,11 +298,17 @@ def create_sweep_runs(exp_id: str, sweep: SweepCreate):
 def list_runs(
     exp_id: str,
     limit: int = 50,
+    offset: int = 0,
     status: Optional[str] = None,
     metric: Optional[str] = None,
     min_metric: Optional[float] = None,
     max_metric: Optional[float] = None,
+    response: Response = None,
 ):
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be positive")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be non-negative")
     try:
         runs = storage.query_runs(
             exp_id,
@@ -300,7 +319,8 @@ def list_runs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return runs[:limit]
+    response.headers["X-Total-Count"] = str(len(runs))
+    return runs[offset:offset + limit]
 
 
 @app.get("/runs/search", response_model=dict)
@@ -312,10 +332,11 @@ def search_runs(
     max_metric: Optional[float] = None,
     limit: int = 50,
     offset: int = 0,
+    response: Response = None,
 ):
     """Find runs across every experiment, newest first, paginated."""
     try:
-        return storage.search_runs(
+        result = storage.search_runs(
             statuses=[status] if status else None,
             name_contains=name_contains,
             metric_name=metric,
@@ -326,6 +347,8 @@ def search_runs(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    response.headers["X-Total-Count"] = str(result["total"])
+    return result
 
 
 @app.get("/runs/search.csv")
@@ -608,11 +631,22 @@ def upload_artifact(run_id: str, name: str = Form(...), artifact_type: str = For
 
 
 @app.get("/runs/{run_id}/artifacts/", response_model=List[dict])
-def list_artifacts(run_id: str):
+def list_artifacts(
+    run_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
+):
     run_data = storage.load_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run_data.get("artifacts", [])
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be positive")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be non-negative")
+    artifacts = run_data.get("artifacts", [])
+    response.headers["X-Total-Count"] = str(len(artifacts))
+    return artifacts[offset:offset + limit]
 
 
 @app.get("/runs/{run_id}/artifacts/{artifact_ref}")

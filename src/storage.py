@@ -139,6 +139,31 @@ class LocalStorageBackend:
                     runs.append(data)
         return runs
 
+    def storage_stats(self) -> dict:
+        """Count experiments, runs and artifact records plus on-disk usage."""
+        experiments = self.list_experiments(include_archived=True)
+        run_count = 0
+        artifact_count = 0
+        artifact_bytes = 0
+        for experiment in experiments:
+            for run in self.list_runs(experiment["id"]):
+                run_count += 1
+                for artifact in run.get("artifacts", []):
+                    artifact_count += 1
+                    artifact_bytes += int(
+                        artifact.get("size_bytes", artifact.get("size", 0))
+                    )
+        store_bytes = sum(
+            path.stat().st_size for path in self.artifacts_dir.glob("*") if path.is_file()
+        )
+        return {
+            "experiment_count": len(experiments),
+            "run_count": run_count,
+            "artifact_count": artifact_count,
+            "artifact_bytes": artifact_bytes,
+            "artifact_store_bytes": store_bytes,
+        }
+
     @staticmethod
     def _validate_metric_filters(
         metric_name: Optional[str],

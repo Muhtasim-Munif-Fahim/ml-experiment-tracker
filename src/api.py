@@ -736,7 +736,12 @@ def run_snapshot(run_id: str):
 # Health check
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    """Report liveness plus current storage totals for readiness checks."""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "storage": storage.storage_stats(),
+    }
 
 
 def artifact_staging_dir() -> str:

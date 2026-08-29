@@ -87,6 +87,10 @@ class ExperimentTrackerClient:
         response.raise_for_status()
         return PaginatedList(response.json(), total=response.headers.get("X-Total-Count"))
 
+    def health(self) -> dict:
+        """Fetch liveness status plus current storage statistics."""
+        return self._request("GET", "/health")
+
     # Experiment methods
     def create_experiment(self, name: str, description: str = "", tags: List[str] = None) -> dict:
         data = {"name": name, "description": description, "tags": tags or []}

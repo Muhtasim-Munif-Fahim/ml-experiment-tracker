@@ -95,6 +95,10 @@ class NoteCreate(BaseModel):
     body: str
 
 
+class TagValue(BaseModel):
+    value: str
+
+
 class ArtifactUpdate(BaseModel):
     name: Optional[str] = None
     artifact_type: Optional[str] = None
@@ -432,6 +436,37 @@ def delete_run(run_id: str):
     if not storage.delete_run(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
     return {"message": "Run deleted"}
+
+
+@app.get("/runs/{run_id}/tags", response_model=dict)
+def list_run_tags(run_id: str):
+    """Return the key/value tags attached to a run."""
+    try:
+        return storage.list_run_tags(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+
+
+@app.put("/runs/{run_id}/tags/{tag_name}", response_model=dict)
+def set_run_tag(run_id: str, tag_name: str, body: TagValue):
+    """Set or replace one key/value tag on a run."""
+    try:
+        return storage.set_run_tag(run_id, tag_name, body.value)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/runs/{run_id}/tags/{tag_name}")
+def delete_run_tag(run_id: str, tag_name: str):
+    try:
+        deleted = storage.delete_run_tag(run_id, tag_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return {"message": "Tag deleted"}
 
 
 @app.post("/runs/{run_id}/params", response_model=dict)

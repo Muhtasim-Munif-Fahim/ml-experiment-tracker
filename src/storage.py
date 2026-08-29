@@ -127,6 +127,44 @@ class LocalStorageBackend:
         path.unlink()
         return True
 
+    def list_run_tags(self, run_id: str) -> dict:
+        """Return the key/value tags attached to a run."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        return dict(run_data.get("tags", {}))
+
+    def set_run_tag(self, run_id: str, name: str, value: str) -> dict:
+        """Set one key/value tag on a run, replacing any existing value."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("tag name must be a non-empty string")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("tag value must be a non-empty string")
+        tags = run_data.get("tags", {})
+        if not isinstance(tags, dict):
+            raise ValueError("run tags are not a mapping")
+        tags[name] = value
+        run_data["tags"] = tags
+        run_data["updated_at"] = datetime.utcnow().isoformat()
+        self.save_run(run_data)
+        return {"name": name, "value": value}
+
+    def delete_run_tag(self, run_id: str, name: str) -> bool:
+        """Remove one tag from a run, returning True if it existed."""
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        tags = run_data.get("tags", {})
+        if not isinstance(tags, dict) or name not in tags:
+            return False
+        del tags[name]
+        run_data["updated_at"] = datetime.utcnow().isoformat()
+        self.save_run(run_data)
+        return True
+
     def list_runs(self, experiment_id: str) -> List[dict]:
         runs_dir = self.experiments_dir / "runs"
         if not runs_dir.exists():

@@ -255,6 +255,18 @@ class ExperimentTrackerClient:
 
         self._request("DELETE", f"/runs/{run_id}")
 
+    def list_run_tags(self, run_id: str) -> dict:
+        """Fetch the key/value tags attached to a run."""
+        return self._request("GET", f"/runs/{run_id}/tags")
+
+    def set_run_tag(self, run_id: str, name: str, value: str) -> dict:
+        """Set or replace one key/value tag on a run."""
+        return self._request("PUT", f"/runs/{run_id}/tags/{name}", json={"value": value})
+
+    def delete_run_tag(self, run_id: str, name: str) -> dict:
+        """Remove one tag from a run; missing tags raise 404."""
+        return self._request("DELETE", f"/runs/{run_id}/tags/{name}")
+
     def log_param(self, run_id: str, name: str, value: Any) -> dict:
         return self._request("POST", f"/runs/{run_id}/params", json={"name": name, "value": value})
 

@@ -275,6 +275,16 @@ class ExperimentTrackerClient:
 
         return self._request("GET", f"/runs/{run_id}/metrics/{metric_name}")
 
+    def metric_history_csv(self, run_id: str, destination: Optional[str] = None) -> str:
+        """Fetch a run's full metric history as CSV text, optionally saving it."""
+        response = self._request_raw("GET", f"/runs/{run_id}/metrics.csv")
+        response.raise_for_status()
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(response.content)
+        return response.text
+
     def downsample_metric(self, run_id: str, metric_name: str, points: int) -> List[dict]:
         """Fetch a metric series reduced to ``points`` shape-preserving samples."""
         return self._request(

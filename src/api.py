@@ -501,6 +501,28 @@ def downsample_metric_history(
     return lttb_downsample(series, points)
 
 
+@app.get("/runs/{run_id}/metrics.csv")
+def run_metrics_csv(run_id: str):
+    """Export every recorded metric point of a run as a flat CSV."""
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rows = [
+        [
+            metric.get("name"),
+            "" if metric.get("step") is None else metric.get("step"),
+            metric.get("value"),
+            metric.get("timestamp", ""),
+        ]
+        for metric in run_data.get("metrics", [])
+    ]
+    return Response(
+        content=render_csv(["name", "step", "value", "timestamp"], rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="run-metrics.csv"'},
+    )
+
+
 @app.post("/experiments/{exp_id}/alert-rules", response_model=dict)
 def create_alert_rule(exp_id: str, rule: AlertRuleCreate):
     """Register a metric threshold rule evaluated as metrics are logged."""

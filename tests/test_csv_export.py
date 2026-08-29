@@ -120,3 +120,67 @@ def test_client_downloads_and_saves_csv(tracker, tmp_path):
     assert ranked[1][1] == run_b["id"]
     assert ranked[2][1] == run_a["id"]
     assert destination.read_bytes().decode("utf-8") == leaderboard_csv
+
+
+def seed_metric_history_run(api):
+    experiment = api.post("/experiments/", json={"name": "history"}).json()
+    run = api.post(
+        f"/experiments/{experiment['id']}/runs/", json={"name": "trainer"}
+    ).json()
+    for step, (name, value) in enumerate(
+        [("loss", 0.5), ("accuracy", 0.6), ("loss", 0.3), ("accuracy", 0.8)],
+        start=1,
+    ):
+        api.post(
+            f"/runs/{run['id']}/metrics",
+            json={"name": name, "value": value, "step": step},
+        )
+    return run
+
+
+def test_run_metrics_csv_flattens_full_history(api):
+    run = seed_metric_history_run(api)
+
+    response = api.get(f"/runs/{run['id']}/metrics.csv")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert (
+        'attachment; filename="run-metrics.csv"'
+        in response.headers["content-disposition"]
+    )
+
+    rows = read_csv_rows(response.text)
+    assert rows[0] == ["name", "step", "value", "timestamp"]
+    assert len(rows) == 5
+    assert [row[1] for row in rows[1:]] == ["1", "2", "3", "4"]
+    assert [row[2] for row in rows[1:]] == ["0.5", "0.6", "0.3", "0.8"]
+    assert [row[0] for row in rows[1:]] == ["loss", "accuracy", "loss", "accuracy"]
+
+
+def test_run_metrics_csv_is_header_only_without_metrics(api):
+    experiment = api.post("/experiments/", json={"name": "empty-history"}).json()
+    run = api.post(
+        f"/experiments/{experiment['id']}/runs/", json={"name": "bare"}
+    ).json()
+
+    rows = read_csv_rows(api.get(f"/runs/{run['id']}/metrics.csv").text)
+    assert rows == [["name", "step", "value", "timestamp"]]
+
+
+def test_run_metrics_csv_missing_run_404(api):
+    assert api.get("/runs/missing/metrics.csv").status_code == 404
+
+
+def test_client_exports_full_metric_history_csv(tracker, tmp_path):
+    experiment = tracker.create_experiment("history-client")
+    run = tracker.create_run(experiment["id"], "trainer")
+    tracker.log_metric(run["id"], "loss", 0.5, step=1)
+    tracker.log_metric(run["id"], "loss", 0.3, step=2)
+
+    destination = tmp_path / "exports" / "run-metrics.csv"
+    text = tracker.metric_history_csv(run["id"], str(destination))
+    rows = read_csv_rows(text)
+    assert rows[0] == ["name", "step", "value", "timestamp"]
+    assert [row[1] for row in rows[1:]] == ["1", "2"]
+    assert [row[2] for row in rows[1:]] == ["0.5", "0.3"]
+    assert destination.read_bytes().decode("utf-8") == text

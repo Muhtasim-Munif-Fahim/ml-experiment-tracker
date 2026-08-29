@@ -351,6 +351,12 @@ class ExperimentTrackerClient:
             Path(destination).write_bytes(response.content)
         return response.content
 
+    def update_artifact(self, run_id: str, artifact_ref: str, updates: dict) -> dict:
+        """Update an artifact's name, type, or metadata without re-uploading."""
+        return self._request(
+            "PATCH", f"/runs/{run_id}/artifacts/{artifact_ref}", json=updates
+        )
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

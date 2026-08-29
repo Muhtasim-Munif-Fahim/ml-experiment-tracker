@@ -95,6 +95,12 @@ class NoteCreate(BaseModel):
     body: str
 
 
+class ArtifactUpdate(BaseModel):
+    name: Optional[str] = None
+    artifact_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 app = FastAPI(title="ML Experiment Tracker API", version="0.1.0")
 
 app.add_middleware(
@@ -701,6 +707,22 @@ def download_artifact(run_id: str, artifact_ref: str):
         filename=filename,
         headers=headers,
     )
+
+
+@app.patch("/runs/{run_id}/artifacts/{artifact_ref}", response_model=dict)
+def update_artifact(run_id: str, artifact_ref: str, updates: ArtifactUpdate):
+    """Update an artifact's name, type, or metadata without re-uploading bytes."""
+    try:
+        updated = storage.update_artifact(
+            run_id, artifact_ref, updates.model_dump(exclude_unset=True)
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return updated
 
 
 @app.post("/runs/{run_id}/notes", response_model=dict)

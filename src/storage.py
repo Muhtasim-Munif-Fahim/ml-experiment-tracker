@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, List, Optional
 
-from .models import AlertRule, Run, Experiment, Artifact
+from .models import AlertRule, Artifact, ArtifactType, Experiment, Run
 
 EXPERIMENT_BUNDLE_VERSION = 1
 RUN_SNAPSHOT_VERSION = 1
@@ -336,6 +336,45 @@ class LocalStorageBackend:
         ):
             raise ValueError("expected_sha256 must be a 64-character hex digest")
         return self.artifact_checksum(artifact_path) == normalized
+
+    def update_artifact(
+        self, run_id: str, artifact_ref: str, updates: dict
+    ) -> Optional[dict]:
+        """Update editable metadata of one artifact in place.
+
+        Accepts ``name``, ``artifact_type``, and ``metadata`` changes without
+        touching the stored bytes. Returns the updated artifact entry, or None
+        when the artifact cannot be found.
+        """
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+        for artifact in run_data.get("artifacts", []):
+            if (
+                artifact.get("artifact_id") != artifact_ref
+                and artifact.get("name") != artifact_ref
+            ):
+                continue
+            if "name" in updates:
+                name = updates["name"]
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("artifact name must be a non-empty string")
+                artifact["name"] = name
+            if "artifact_type" in updates:
+                try:
+                    artifact["type"] = ArtifactType(updates["artifact_type"]).value
+                except ValueError as exc:
+                    raise ValueError(
+                        f"unknown artifact type: {updates['artifact_type']!r}"
+                    ) from exc
+            if "metadata" in updates:
+                if not isinstance(updates["metadata"], dict):
+                    raise ValueError("artifact metadata must be a mapping")
+                artifact["metadata"] = updates["metadata"]
+            run_data["updated_at"] = datetime.utcnow().isoformat()
+            self.save_run(run_data)
+            return artifact
+        return None
 
     def run_leaderboard(
         self,

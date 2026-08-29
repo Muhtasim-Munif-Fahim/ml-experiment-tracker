@@ -760,6 +760,24 @@ def update_artifact(run_id: str, artifact_ref: str, updates: ArtifactUpdate):
     return updated
 
 
+@app.get("/runs/{run_id}/artifacts.zip")
+def download_run_artifacts_zip(run_id: str):
+    """Bundle every stored artifact of a run into a downloadable zip archive."""
+    archive_path = (
+        Path(artifact_staging_dir())
+        / f"run_{run_id}_artifacts_{uuid.uuid4().hex[:8]}.zip"
+    )
+    try:
+        written = storage.export_run_artifacts_zip(run_id, archive_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    return FileResponse(
+        written,
+        media_type="application/zip",
+        filename=f"run-{run_id}-artifacts.zip",
+    )
+
+
 @app.post("/runs/{run_id}/notes", response_model=dict)
 def create_note(run_id: str, note: NoteCreate):
     """Attach a freeform markdown note to a run."""

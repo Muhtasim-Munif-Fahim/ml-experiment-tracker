@@ -7,6 +7,7 @@ import shutil
 import json
 import hashlib
 import uuid
+import zipfile
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -374,6 +375,55 @@ class LocalStorageBackend:
         ):
             raise ValueError("expected_sha256 must be a 64-character hex digest")
         return self.artifact_checksum(artifact_path) == normalized
+
+    def export_run_artifacts_zip(self, run_id: str, destination: Path) -> Path:
+        """Bundle every stored artifact of a run into one zip archive.
+
+        Missing artifact files are skipped so the archive never fails on a
+        stale record. When two artifacts share a name, the later arcname is
+        prefixed with its artifact id. A ``manifest.json`` entry lists each
+        artifact's metadata alongside its bytes.
+        """
+        run_data = self.load_run(run_id)
+        if run_data is None:
+            raise KeyError(f"run not found: {run_id}")
+
+        used_names = set()
+        entries = []
+        for artifact in run_data.get("artifacts", []):
+            file_path = Path(artifact["path"])
+            if not file_path.exists():
+                continue
+            arcname = artifact.get("name") or file_path.name
+            if arcname in used_names:
+                arcname = f"{artifact.get('artifact_id', 'artifact')}-{arcname}"
+            used_names.add(arcname)
+            entries.append((arcname, file_path, artifact))
+
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    [
+                        {
+                            "artifact_id": artifact.get("artifact_id"),
+                            "name": artifact.get("name"),
+                            "type": artifact.get("type"),
+                            "size_bytes": artifact.get(
+                                "size_bytes", artifact.get("size")
+                            ),
+                            "checksum_sha256": artifact.get("checksum_sha256"),
+                        }
+                        for _, _, artifact in entries
+                    ],
+                    indent=2,
+                ),
+            )
+            for arcname, file_path, _artifact in entries:
+                archive.write(file_path, arcname)
+        return target
 
     def update_artifact(
         self, run_id: str, artifact_ref: str, updates: dict

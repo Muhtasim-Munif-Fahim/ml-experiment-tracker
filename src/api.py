@@ -74,6 +74,10 @@ class SweepCreate(BaseModel):
     base_name: Optional[str] = None
 
 
+class RunImportRequest(BaseModel):
+    runs: List[Dict[str, Any]] = Field(min_length=1)
+
+
 class ParamCreate(BaseModel):
     name: str
     value: Any
@@ -307,6 +311,17 @@ def create_sweep_runs(exp_id: str, sweep: SweepCreate):
         created_runs.append(run.to_dict())
     
     return created_runs
+
+
+@app.post("/experiments/{exp_id}/runs/import", response_model=List[dict])
+def import_runs(exp_id: str, request: RunImportRequest):
+    """Create several runs from explicit specs in one request."""
+    try:
+        return storage.import_runs(exp_id, request.runs)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/experiments/{exp_id}/runs/", response_model=List[dict])

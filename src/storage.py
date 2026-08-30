@@ -171,6 +171,54 @@ class LocalStorageBackend:
         self.save_run(copy)
         return copy
 
+    def import_runs(self, experiment_id: str, run_specs: List[dict]) -> List[dict]:
+        """Create several runs from explicit specs in a single call.
+
+        Every spec must carry a non-empty ``name`` and may include ``params``
+        and ``tags`` mappings. Runs receive fresh ids and start in the running
+        state, so the call is safe to retry and never overwrites records.
+        """
+        if self.load_experiment(experiment_id) is None:
+            raise KeyError(f"experiment not found: {experiment_id}")
+        if not isinstance(run_specs, list) or not run_specs:
+            raise ValueError("run_specs must be a non-empty list")
+        if len(run_specs) > 1000:
+            raise ValueError("cannot import more than 1000 runs at once")
+
+        created = []
+        for spec in run_specs:
+            if not isinstance(spec, dict):
+                raise ValueError("every run spec must be an object")
+            name = spec.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("every run spec must have a non-empty name")
+            params = spec.get("params") or {}
+            tags = spec.get("tags") or {}
+            if not isinstance(params, dict):
+                raise ValueError(f"params for run {name!r} must be a mapping")
+            if not isinstance(tags, dict):
+                raise ValueError(f"tags for run {name!r} must be a mapping")
+            run = {
+                "id": str(uuid.uuid4()),
+                "experiment_id": experiment_id,
+                "name": name,
+                "parent_run_id": None,
+                "status": "running",
+                "params": dict(params),
+                "tags": dict(tags),
+                "metrics": [],
+                "artifacts": [],
+                "alerts": [],
+                "notes": [],
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+                "finished_at": None,
+                "error": None,
+            }
+            self.save_run(run)
+            created.append(run)
+        return created
+
     def list_run_tags(self, run_id: str) -> dict:
         """Return the key/value tags attached to a run."""
         run_data = self.load_run(run_id)

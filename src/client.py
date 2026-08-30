@@ -154,6 +154,12 @@ class ExperimentTrackerClient:
             data["base_name"] = base_name
         return self._request("POST", f"/experiments/{exp_id}/runs/sweep", json=data)
 
+    def import_runs(self, exp_id: str, runs: List[dict]) -> List[dict]:
+        """Create several runs from explicit specs in a single request."""
+        return self._request(
+            "POST", f"/experiments/{exp_id}/runs/import", json={"runs": runs}
+        )
+
     def get_run(self, run_id: str) -> dict:
         return self._request("GET", f"/runs/{run_id}")
 

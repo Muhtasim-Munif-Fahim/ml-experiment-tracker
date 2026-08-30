@@ -128,6 +128,49 @@ class LocalStorageBackend:
         path.unlink()
         return True
 
+    def duplicate_run(
+        self,
+        run_id: str,
+        *,
+        name: Optional[str] = None,
+        include_metrics: bool = False,
+    ) -> dict:
+        """Copy a run into a fresh record with a new id.
+
+        The copy keeps the source run's experiment, params and tags; when
+        ``include_metrics`` is set the recorded metric history is copied too.
+        Artifacts are not duplicated because their bytes are owned by the
+        original run record. The new run starts in the running state.
+        """
+        source = self.load_run(run_id)
+        if source is None:
+            raise KeyError(f"run not found: {run_id}")
+        if not isinstance(include_metrics, bool):
+            raise ValueError("include_metrics must be a boolean")
+        copy = {
+            "id": str(uuid.uuid4()),
+            "experiment_id": source.get("experiment_id"),
+            "name": name or f"{source.get('name', 'run')} (copy)",
+            "parent_run_id": run_id,
+            "status": "running",
+            "params": dict(source.get("params", {}) or {}),
+            "tags": dict(source.get("tags", {}) or {}),
+            "metrics": (
+                [dict(metric) for metric in source.get("metrics", [])]
+                if include_metrics
+                else []
+            ),
+            "artifacts": [],
+            "alerts": [],
+            "notes": [],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+            "finished_at": None,
+            "error": None,
+        }
+        self.save_run(copy)
+        return copy
+
     def list_run_tags(self, run_id: str) -> dict:
         """Return the key/value tags attached to a run."""
         run_data = self.load_run(run_id)

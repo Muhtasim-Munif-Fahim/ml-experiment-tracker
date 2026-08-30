@@ -61,6 +61,11 @@ class RunCompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class RunDuplicateRequest(BaseModel):
+    name: Optional[str] = None
+    include_metrics: bool = False
+
+
 class SweepCreate(BaseModel):
     name_template: str = 'sweep-{index}'
     param_grid: Dict[str, List[Any]]
@@ -436,6 +441,19 @@ def delete_run(run_id: str):
     if not storage.delete_run(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
     return {"message": "Run deleted"}
+
+
+@app.post("/runs/{run_id}/duplicate", response_model=dict)
+def duplicate_run(run_id: str, request: RunDuplicateRequest):
+    """Copy a run into a fresh record with a new id, optionally with metrics."""
+    try:
+        return storage.duplicate_run(
+            run_id, name=request.name, include_metrics=request.include_metrics
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/runs/{run_id}/tags", response_model=dict)

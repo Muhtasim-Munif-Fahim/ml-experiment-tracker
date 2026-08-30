@@ -255,6 +255,15 @@ class ExperimentTrackerClient:
 
         self._request("DELETE", f"/runs/{run_id}")
 
+    def duplicate_run(
+        self, run_id: str, name: str = None, include_metrics: bool = False
+    ) -> dict:
+        """Copy a run into a fresh record, optionally including metric history."""
+        payload = {"include_metrics": include_metrics}
+        if name:
+            payload["name"] = name
+        return self._request("POST", f"/runs/{run_id}/duplicate", json=payload)
+
     def list_run_tags(self, run_id: str) -> dict:
         """Fetch the key/value tags attached to a run."""
         return self._request("GET", f"/runs/{run_id}/tags")

@@ -245,6 +245,23 @@ def download_experiment_artifacts_zip(exp_id: str):
     )
 
 
+@app.get("/experiments/{exp_id}/pivot.csv")
+def experiment_metric_pivot(exp_id: str, metric_names: Optional[str] = None):
+    """Return a wide-format CSV of the latest metric values for every run."""
+    try:
+        requested = metric_names.split(",") if metric_names else None
+        table = storage.experiment_metric_pivot(exp_id, requested)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    return Response(
+        content=render_csv(table["columns"], table["rows"]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=experiment-{exp_id}-pivot.csv"
+        },
+    )
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

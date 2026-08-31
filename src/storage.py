@@ -871,6 +871,50 @@ class LocalStorageBackend:
                 archive.write(entry["file_path"], entry["arcname"])
         return target
 
+    def experiment_metric_pivot(
+        self, exp_id: str, metric_names: Optional[List[str]] = None
+    ) -> dict:
+        """Build a wide-format metric table for every run of one experiment.
+
+        Returns ``{"columns": [...], "rows": [[...], ...]}`` where each row
+        starts with ``run_id`` and ``run_name`` followed by the latest value
+        for each requested metric. When ``metric_names`` is omitted, every
+        metric observed across the experiment is included.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+
+        runs = sorted(
+            self.list_runs(exp_id),
+            key=lambda run: str(run.get("created_at", "")),
+            reverse=True,
+        )
+        if not runs:
+            return {"columns": ["run_id", "run_name"], "rows": []}
+
+        observed = {}
+        for run in runs:
+            for metric in run.get("metrics", []):
+                name = metric.get("name")
+                if name and name not in observed:
+                    observed[name] = True
+        if metric_names is None:
+            metric_names = sorted(observed.keys())
+        else:
+            metric_names = [name for name in metric_names if name in observed]
+
+        columns = ["run_id", "run_name"] + metric_names
+        rows = []
+        for run in runs:
+            latest: Dict[str, Optional[float]] = {name: None for name in metric_names}
+            for metric in run.get("metrics", []):
+                name = metric.get("name")
+                if name in latest:
+                    latest[name] = float(metric.get("value", 0) or 0)
+            row = [run.get("id"), run.get("name")] + [latest[name] for name in metric_names]
+            rows.append(row)
+        return {"columns": columns, "rows": rows}
+
 
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""

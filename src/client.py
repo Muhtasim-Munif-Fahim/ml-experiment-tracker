@@ -396,6 +396,18 @@ class ExperimentTrackerClient:
             path.write_bytes(response.content)
         return response.content
 
+    def download_experiment_artifacts_zip(
+        self, exp_id: str, destination: Optional[str] = None
+    ) -> bytes:
+        """Download every stored artifact of an experiment as one zip archive."""
+        response = self._request_raw("GET", f"/experiments/{exp_id}/artifacts.zip")
+        response.raise_for_status()
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(response.content)
+        return response.content
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

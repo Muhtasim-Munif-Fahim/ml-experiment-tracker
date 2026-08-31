@@ -225,6 +225,26 @@ def experiment_artifacts(
     }
 
 
+@app.get("/experiments/{exp_id}/artifacts.zip")
+def download_experiment_artifacts_zip(exp_id: str):
+    """Bundle every stored artifact of an experiment into a downloadable zip archive."""
+    archive_path = (
+        Path(artifact_staging_dir())
+        / f"experiment_{exp_id}_artifacts_{uuid.uuid4().hex[:8]}.zip"
+    )
+    try:
+        written = storage.export_experiment_artifacts_zip(exp_id, archive_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    experiment = storage.load_experiment(exp_id)
+    filename = f"experiment-{experiment.get('name', exp_id)}-artifacts.zip"
+    return FileResponse(
+        written,
+        media_type="application/zip",
+        filename=filename,
+    )
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

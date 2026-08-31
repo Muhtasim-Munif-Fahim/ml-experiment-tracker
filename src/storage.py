@@ -809,6 +809,68 @@ class LocalStorageBackend:
         )
         return target
 
+    def export_experiment_artifacts_zip(self, exp_id: str, destination: Path) -> Path:
+        """Bundle every stored artifact of an experiment into one zip archive.
+
+        Missing artifact files are skipped so the archive never fails on a
+        stale record. When two artifacts share a name, the arcname is prefixed
+        with ``<run_id>-<artifact_id>-`` to keep them distinct. A
+        ``manifest.json`` entry lists each artifact's metadata alongside its
+        bytes and owning run.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+
+        runs = self.list_runs(exp_id)
+        used_names = set()
+        entries = []
+        for run in runs:
+            for artifact in run.get("artifacts", []):
+                file_path = Path(artifact["path"])
+                if not file_path.exists():
+                    continue
+                arcname = artifact.get("name") or file_path.name
+                prefixed = f"{run.get('id', 'run')}-{artifact.get('artifact_id', 'artifact')}-{arcname}"
+                if arcname in used_names:
+                    arcname = prefixed
+                used_names.add(arcname)
+                entries.append(
+                    {
+                        "arcname": arcname,
+                        "file_path": file_path,
+                        "run_id": run.get("id"),
+                        "run_name": run.get("name"),
+                        "artifact": artifact,
+                    }
+                )
+
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    [
+                        {
+                            "run_id": entry["run_id"],
+                            "run_name": entry["run_name"],
+                            "artifact_id": entry["artifact"].get("artifact_id"),
+                            "name": entry["artifact"].get("name"),
+                            "type": entry["artifact"].get("type"),
+                            "size_bytes": entry["artifact"].get(
+                                "size_bytes", entry["artifact"].get("size")
+                            ),
+                            "checksum_sha256": entry["artifact"].get("checksum_sha256"),
+                        }
+                        for entry in entries
+                    ],
+                    indent=2,
+                ),
+            )
+            for entry in entries:
+                archive.write(entry["file_path"], entry["arcname"])
+        return target
+
 
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""

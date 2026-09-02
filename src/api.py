@@ -66,6 +66,10 @@ class RunDuplicateRequest(BaseModel):
     include_metrics: bool = False
 
 
+class RunMoveRequest(BaseModel):
+    target_experiment_id: str
+
+
 class SweepCreate(BaseModel):
     name_template: str = 'sweep-{index}'
     param_grid: Dict[str, List[Any]]
@@ -548,6 +552,23 @@ def duplicate_run(run_id: str, request: RunDuplicateRequest):
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
+
+
+@app.post("/runs/{run_id}/move", response_model=dict)
+def move_run(run_id: str, request: RunMoveRequest):
+    """Move a run from its current experiment into another experiment.
+
+    The source experiment drops the run id and the destination experiment
+    gains it; the run record itself is rewritten with the new
+    ``experiment_id``. Returns the updated run record so the caller can
+    confirm the move.
+    """
+    try:
+        return storage.move_run(run_id, request.target_experiment_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

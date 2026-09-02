@@ -270,6 +270,18 @@ class ExperimentTrackerClient:
             payload["name"] = name
         return self._request("POST", f"/runs/{run_id}/duplicate", json=payload)
 
+    def move_run(self, run_id: str, target_experiment_id: str) -> dict:
+        """Move a run into a different experiment.
+
+        Returns the rewritten run (with the new ``experiment_id``) so the
+        caller can confirm the move succeeded.
+        """
+        return self._request(
+            "POST",
+            f"/runs/{run_id}/move",
+            json={"target_experiment_id": target_experiment_id},
+        )
+
     def list_run_tags(self, run_id: str) -> dict:
         """Fetch the key/value tags attached to a run."""
         return self._request("GET", f"/runs/{run_id}/tags")

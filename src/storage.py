@@ -128,6 +128,60 @@ class LocalStorageBackend:
         path.unlink()
         return True
 
+    def move_run(self, run_id: str, target_exp_id: str) -> dict:
+        """Move a run to a different experiment, returning the updated run.
+
+        The run's ``experiment_id`` is rewritten and both the source and
+        destination experiment records are updated in-place: the source
+        drops the run id and the destination appends it. The run record is
+        re-persisted under its existing ``run_id``. Raises ``KeyError``
+        when either the run or the destination experiment cannot be found;
+        raises ``ValueError`` when the run already belongs to the target
+        experiment (no-op).
+        """
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        target = self.load_experiment(target_exp_id)
+        if target is None:
+            raise KeyError(f"experiment not found: {target_exp_id}")
+
+        source_exp_id = run.get("experiment_id")
+        if source_exp_id == target_exp_id:
+            raise ValueError(
+                f"run {run_id} already belongs to experiment {target_exp_id}"
+            )
+
+        if source_exp_id:
+            source = self.load_experiment(source_exp_id)
+            if source is not None and isinstance(source.get("runs"), list):
+                source["runs"] = [
+                    r for r in source["runs"]
+                    if not (isinstance(r, dict) and r.get("id") == run_id)
+                ]
+                source["updated_at"] = datetime.utcnow().isoformat()
+                self.save_experiment(source)
+
+        run["experiment_id"] = target_exp_id
+        run["updated_at"] = datetime.utcnow().isoformat()
+        self.save_run(run)
+
+        if isinstance(target.get("runs"), list):
+            if not any(
+                isinstance(r, dict) and r.get("id") == run_id
+                for r in target["runs"]
+            ):
+                target["runs"].append({
+                    "id": run["id"],
+                    "name": run.get("name"),
+                    "status": run.get("status"),
+                    "created_at": run.get("created_at"),
+                })
+        target["updated_at"] = datetime.utcnow().isoformat()
+        self.save_experiment(target)
+
+        return run
+
     def duplicate_run(
         self,
         run_id: str,

@@ -262,6 +262,50 @@ def experiment_metric_pivot(exp_id: str, metric_names: Optional[str] = None):
     )
 
 
+@app.get("/experiments/{exp_id}/metrics.history.csv")
+def experiment_metric_history(
+    exp_id: str,
+    metric_names: Optional[str] = None,
+    start_step: Optional[int] = None,
+    end_step: Optional[int] = None,
+):
+    """Return the full long-form metric time-series for every run of an experiment.
+
+    Each row carries ``run_id``, ``run_name``, ``metric_name``, ``step``,
+    ``value`` and ``timestamp`` so plotting libraries can render training
+    curves across runs. ``metric_names`` accepts a comma-separated list of
+    metric names to include; ``start_step`` / ``end_step`` clip the inclusive
+    step range. The CSV stays RFC-4180 compatible (CRLF line endings, every
+    field quoted) so it round-trips through pandas without surprises.
+    """
+    try:
+        requested = metric_names.split(",") if metric_names else None
+        rows = storage.experiment_metric_long(
+            exp_id,
+            metric_names=requested,
+            start_step=start_step,
+            end_step=end_step,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    columns = ["run_id", "run_name", "metric_name", "step", "value", "timestamp"]
+    row_lists = [
+        [row.get(col) for col in columns]
+        for row in rows
+    ]
+    return Response(
+        content=render_csv(columns, row_lists),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=experiment-{exp_id}-metrics-history.csv"
+            )
+        },
+    )
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

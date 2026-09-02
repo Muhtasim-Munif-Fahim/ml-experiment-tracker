@@ -429,6 +429,39 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def experiment_metric_history_csv(
+        self,
+        exp_id: str,
+        metric_names: Optional[List[str]] = None,
+        start_step: Optional[int] = None,
+        end_step: Optional[int] = None,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch the long-form metric time-series CSV for an experiment.
+
+        Each row carries ``run_id``, ``run_name``, ``metric_name``, ``step``,
+        ``value`` and ``timestamp``. ``metric_names`` restricts to a chosen
+        subset and ``start_step`` / ``end_step`` clip the inclusive step range.
+        Returns the CSV text and optionally writes it to ``destination``.
+        """
+        params: dict = {}
+        if metric_names:
+            params["metric_names"] = ",".join(metric_names)
+        if start_step is not None:
+            params["start_step"] = str(start_step)
+        if end_step is not None:
+            params["end_step"] = str(end_step)
+        response = self._request_raw(
+            "GET", f"/experiments/{exp_id}/metrics.history.csv", params=params
+        )
+        response.raise_for_status()
+        text = response.text
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return text
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

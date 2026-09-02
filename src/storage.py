@@ -915,6 +915,69 @@ class LocalStorageBackend:
             rows.append(row)
         return {"columns": columns, "rows": rows}
 
+    def experiment_metric_long(
+        self,
+        exp_id: str,
+        *,
+        metric_names: Optional[List[str]] = None,
+        start_step: Optional[int] = None,
+        end_step: Optional[int] = None,
+    ) -> List[dict]:
+        """Return every metric observation in an experiment as long-form rows.
+
+        Each row carries ``run_id``, ``run_name``, ``metric_name``, ``step``,
+        ``value`` and ``timestamp`` so plotting libraries can render the
+        full time-series across runs. ``metric_names`` restricts the output
+        to a chosen subset (unknown names are silently dropped); an inclusive
+        ``start_step`` / ``end_step`` range further narrows the result.
+        Rows are sorted by (run_name, metric_name, step) so the output is
+        reproducible across calls.
+
+        Distinct from :meth:`experiment_metric_pivot`, which returns the
+        latest value per run in wide form. This helper exposes every logged
+        observation so consumers can plot training curves, not just the
+        final accuracy.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        if start_step is not None and end_step is not None and start_step > end_step:
+            raise ValueError("start_step must not exceed end_step")
+
+        runs = self.list_runs(exp_id)
+        if metric_names is not None:
+            wanted = {str(name) for name in metric_names}
+        else:
+            wanted = None
+
+        rows: List[dict] = []
+        for run in runs:
+            run_id = run.get("id")
+            run_name = run.get("name")
+            for metric in run.get("metrics", []):
+                name = metric.get("name")
+                if wanted is not None and name not in wanted:
+                    continue
+                step = metric.get("step")
+                if start_step is not None and step is not None and step < start_step:
+                    continue
+                if end_step is not None and step is not None and step > end_step:
+                    continue
+                rows.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "metric_name": name,
+                    "step": step,
+                    "value": metric.get("value"),
+                    "timestamp": metric.get("timestamp"),
+                })
+
+        rows.sort(key=lambda row: (
+            str(row.get("run_name") or ""),
+            str(row.get("metric_name") or ""),
+            row.get("step") if row.get("step") is not None else -1,
+        ))
+        return rows
+
 
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""

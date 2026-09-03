@@ -310,6 +310,30 @@ def experiment_metric_history(
     )
 
 
+@app.get("/runs/{run_id}/notes.csv")
+def export_run_notes(run_id: str, destination: Optional[str] = None):
+    """Export one run's notes as a CSV file."""
+    from fastapi.responses import FileResponse
+    import tempfile
+    if destination is None:
+        tmp = tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".csv", delete=False, dir=tempfile.gettempdir()
+        )
+        destination = tmp.name
+        tmp.close()
+    try:
+        written_path = storage.export_run_notes_csv(run_id, destination)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    return FileResponse(
+        written_path,
+        media_type="text/csv",
+        filename=f"run-{run_id}-notes.csv",
+    )
+
+
+
+
 @app.get("/experiments/{exp_id}/snapshot.csv")
 def experiment_snapshot(
     exp_id: str,

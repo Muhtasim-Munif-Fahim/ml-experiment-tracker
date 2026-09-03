@@ -498,6 +498,23 @@ class ExperimentTrackerClient:
 
 
 
+    def export_run_notes_csv(
+        self,
+        run_id: str,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch the CSV of a single run's notes."""
+        response = self._request_raw(
+            "GET", f"/runs/{run_id}/notes.csv"
+        )
+        response.raise_for_status()
+        text = response.text
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return text
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

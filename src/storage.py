@@ -1099,6 +1099,40 @@ class LocalStorageBackend:
 
 
 
+    def export_run_notes_csv(
+        self,
+        run_id: str,
+        destination: str,
+    ) -> str:
+        """Write a run's notes to ``destination`` as a CSV file.
+
+        The CSV carries one row per note with ``run_id``, ``body``,
+        ``created_at``, ``author``. The run must exist (KeyError
+        otherwise). The destination's parent directory is created as
+        needed. Returns the absolute path to the written CSV.
+        """
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        target = Path(destination)
+        if target.parent:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = ["run_id", "body", "created_at", "author"]
+        with open(target, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for note in run.get("notes", []):
+                if not isinstance(note, dict):
+                    continue
+                writer.writerow({
+                    "run_id": run_id,
+                    "body": str(note.get("body", "")),
+                    "created_at": str(note.get("created_at", "")),
+                    "author": str(note.get("author", "")),
+                })
+        return str(target)
+
+
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""
 

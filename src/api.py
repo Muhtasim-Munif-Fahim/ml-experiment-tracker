@@ -310,6 +310,42 @@ def experiment_metric_history(
     )
 
 
+@app.get("/experiments/{exp_id}/snapshot.csv")
+def experiment_snapshot(
+    exp_id: str,
+    metric_names: Optional[str] = None,
+):
+    """Wide-form snapshot of every run: status, counts, latest metric values."""
+    try:
+        requested = metric_names.split(",") if metric_names else None
+        rows = storage.experiment_snapshot(exp_id, metric_names=requested)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    if not rows:
+        columns = ["run_id", "run_name", "status", "metric_count"]
+    else:
+        columns = [
+            "run_id", "run_name", "status", "created_at", "updated_at",
+            "finished_at", "error", "metric_count", "artifact_count",
+            "tag_count", "note_count", "params",
+        ]
+        for row in rows:
+            for key in row.keys():
+                if key not in columns:
+                    columns.append(key)
+    row_lists = [[row.get(col, "") for col in columns] for row in rows]
+    return Response(
+        content=render_csv(columns, row_lists),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=experiment-{exp_id}-snapshot.csv"
+        },
+    )
+
+
+
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

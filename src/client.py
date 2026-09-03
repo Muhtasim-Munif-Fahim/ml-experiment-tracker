@@ -474,6 +474,30 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def experiment_snapshot_csv(
+        self,
+        exp_id: str,
+        metric_names: Optional[List[str]] = None,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch a wide-form per-run snapshot CSV for an experiment."""
+        params: dict = {}
+        if metric_names:
+            params["metric_names"] = ",".join(metric_names)
+        response = self._request_raw(
+            "GET", f"/experiments/{exp_id}/snapshot.csv", params=params
+        )
+        response.raise_for_status()
+        text = response.text
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return text
+
+
+
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

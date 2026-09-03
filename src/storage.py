@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 import shutil
 import json
@@ -1033,6 +1034,71 @@ class LocalStorageBackend:
         return rows
 
 
+    def experiment_snapshot(
+        self,
+        exp_id: str,
+        *,
+        metric_names: Optional[List[str]] = None,
+    ) -> List[dict]:
+        """One row per run with the latest value of each requested metric.
+
+        Each row carries ``run_id``, ``run_name``, ``status``,
+        ``created_at``, ``updated_at``, ``finished_at``, ``error``,
+        ``metric_count``, ``artifact_count``, ``tag_count``, ``note_count``,
+        ``params`` (JSON), and a column per requested metric. ``metric_names``
+        defaults to every metric observed across the experiment so the
+        CSV output is wide-form. Raises ``KeyError`` when the experiment
+        is missing.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+
+        runs = self.list_runs(exp_id)
+        observed: dict[str, bool] = {}
+        for run in runs:
+            for metric in run.get("metrics", []):
+                name = metric.get("name")
+                if name:
+                    observed[name] = True
+        if metric_names is None:
+            chosen = sorted(observed.keys())
+        else:
+            chosen = [str(name) for name in metric_names if name in observed]
+
+        latest_values: dict[str, dict[str, object]] = {}
+        for run in runs:
+            run_id = run.get("id")
+            latest_values[run_id] = {}
+            for metric in run.get("metrics", []):
+                name = metric.get("name")
+                if name in chosen:
+                    latest_values[run_id][name] = metric.get("value")
+
+        rows: list[dict[str, object]] = []
+        for run in runs:
+            run_id = run.get("id")
+            row: dict[str, object] = {
+                "run_id": run_id,
+                "run_name": run.get("name"),
+                "status": run.get("status"),
+                "created_at": run.get("created_at"),
+                "updated_at": run.get("updated_at"),
+                "finished_at": run.get("finished_at"),
+                "error": run.get("error"),
+                "metric_count": len(run.get("metrics", [])),
+                "artifact_count": len(run.get("artifacts", [])),
+                "tag_count": len(run.get("tags", {})),
+                "note_count": len(run.get("notes", [])),
+                "params": json.dumps(run.get("params", {}), default=str),
+            }
+            for metric_name in chosen:
+                value = latest_values[run_id].get(metric_name)
+                row[metric_name] = value if value is not None else ""
+            rows.append(row)
+        return rows
+
+
+
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""
 
@@ -1064,7 +1130,6 @@ class S3StorageBackend:
 
     def load_artifact(self, artifact_path: str) -> bytes:
         raise NotImplementedError
-
 
 class StorageFactory:
     @staticmethod

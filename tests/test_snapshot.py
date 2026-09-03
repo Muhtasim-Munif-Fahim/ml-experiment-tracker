@@ -1,102 +1,120 @@
-﻿"""Tests for single-run snapshot export."""
+﻿"""Tests for experiment_snapshot."""
 
+from __future__ import annotations
+
+import csv
 import io
-import json
-import tempfile
-from pathlib import Path
 
-import pytest
-
-from src.models import Artifact, ArtifactType, Experiment, Run
+from src.models import Experiment, Run
 from src.storage import LocalStorageBackend
 
 
-def seed_run_with_artifact(storage):
-    experiment = Experiment(name="portable run")
-    run = Run(experiment_id=experiment.id, name="baseline", params={"lr": 0.05})
-    run.log_metric("accuracy", 0.9, step=2)
-    run.log_artifact(
-        Artifact("weights", ArtifactType.MODEL, "stored/weights", 128, checksum_sha256="a" * 64)
-    )
+def _seed(tmp_path):
+    storage = LocalStorageBackend(tmp_path / "mlruns")
+    experiment = Experiment(name="snap-exp")
     storage.save_experiment(experiment.to_dict())
-    storage.save_run(run.to_dict())
-    return experiment, run
+    run_a = Run(experiment_id=experiment.id, name="train-a")
+    run_a.log_metric("accuracy", 0.7, step=1)
+    run_a.log_metric("accuracy", 0.9, step=2)
+    run_a.log_metric("loss", 0.5, step=1)
+    run_b = Run(experiment_id=experiment.id, name="train-b")
+    run_b.log_metric("accuracy", 0.6, step=1)
+    run_b.log_param("lr", 0.01)
+    storage.save_run(run_a.to_dict())
+    storage.save_run(run_b.to_dict())
+    experiment.add_run(run_a)
+    experiment.add_run(run_b)
+    return storage, experiment
 
 
-def test_build_run_snapshot_contains_context_and_manifest():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        storage = LocalStorageBackend(tmpdir)
-        experiment, run = seed_run_with_artifact(storage)
-
-        snapshot = storage.build_run_snapshot(run.id)
-        assert snapshot["schema_version"] == 1
-        assert snapshot["snapshot_type"] == "run"
-        assert snapshot["experiment"] == {"id": experiment.id, "name": "portable run"}
-        assert snapshot["run"]["params"] == {"lr": 0.05}
-        assert snapshot["run"]["metrics"][0]["value"] == 0.9
-        # model-serialized records store the compact artifact shape without
-        # checksums; API uploads persist them and surface in manifests below
-        assert snapshot["artifact_manifest"] == [
-            {
-                "name": "weights",
-                "type": "model",
-                "size_bytes": 128,
-                "checksum_sha256": None,
-            }
-        ]
+def test_snapshot_returns_one_row_per_run(tmp_path) -> None:
+    storage, experiment = _seed(tmp_path)
+    rows = storage.experiment_snapshot(experiment.id)
+    assert len(rows) == 2
+    columns = set(rows[0].keys())
+    assert "run_id" in columns
+    assert "run_name" in columns
+    assert "metric_count" in columns
+    assert "artifact_count" in columns
 
 
-def test_export_run_snapshot_writes_standalone_file():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        storage = LocalStorageBackend(tmpdir)
-        _, run = seed_run_with_artifact(storage)
-
-        destination = Path(tmpdir) / "exports" / "run.json"
-        written = storage.export_run_snapshot(run.id, destination)
-        assert written == destination
-
-        payload = json.loads(destination.read_text(encoding="utf-8"))
-        assert payload["run"]["id"] == run.id
-
-        with pytest.raises(KeyError, match="run not found"):
-            storage.export_run_snapshot("missing", destination)
+def test_snapshot_includes_latest_metric_values(tmp_path) -> None:
+    storage, experiment = _seed(tmp_path)
+    rows = storage.experiment_snapshot(experiment.id)
+    by_name = {row["run_name"]: row for row in rows}
+    assert by_name["train-a"]["accuracy"] == 0.9
+    assert by_name["train-b"]["accuracy"] == 0.6
+    assert by_name["train-a"]["loss"] == 0.5
+    assert "loss" not in by_name["train-b"] or by_name["train-b"]["loss"] == ""
 
 
-def test_api_run_snapshot_endpoint(api):
-    experiment = api.post("/experiments/", json={"name": "portable"}).json()
-    run = api.post(
-        f"/experiments/{experiment['id']}/runs/",
-        json={"name": "baseline", "params": {"seed": 3}},
-    ).json()
-    api.post(f"/runs/{run['id']}/metrics", json={"name": "accuracy", "value": 0.9, "step": 1})
-    api.post(
-        f"/runs/{run['id']}/artifacts",
-        data={"name": "notes.txt", "artifact_type": "config", "metadata": "{}"},
-        files={"file": ("notes.txt", io.BytesIO(b"hello"), "text/plain")},
-    )
+def test_snapshot_restricts_metric_names(tmp_path) -> None:
+    storage, experiment = _seed(tmp_path)
+    rows = storage.experiment_snapshot(experiment.id, metric_names=["accuracy"])
+    assert "accuracy" in rows[0]
+    assert "loss" not in rows[0]
 
-    response = api.get(f"/runs/{run['id']}/snapshot")
+
+def test_snapshot_rejects_unknown_experiment(tmp_path) -> None:
+    storage = LocalStorageBackend(tmp_path / "mlruns")
+    import pytest
+    with pytest.raises(KeyError, match="experiment not found"):
+        storage.experiment_snapshot("missing")
+
+
+def test_snapshot_handles_no_runs(tmp_path) -> None:
+    storage = LocalStorageBackend(tmp_path / "mlruns")
+    experiment = Experiment(name="empty")
+    storage.save_experiment(experiment.to_dict())
+    rows = storage.experiment_snapshot(experiment.id)
+    assert rows == []
+
+
+def test_snapshot_records_run_counts(tmp_path) -> None:
+    storage, experiment = _seed(tmp_path)
+    rows = storage.experiment_snapshot(experiment.id)
+    by_name = {row["run_name"]: row for row in rows}
+    assert by_name["train-a"]["metric_count"] == 3
+    assert by_name["train-b"]["metric_count"] == 1
+    assert by_name["train-b"]["tag_count"] == 0
+    assert by_name["train-b"]["note_count"] == 0
+
+
+def test_snapshot_csv_endpoint_serialises_rows(tmp_path, api, temp_storage) -> None:
+    from src.models import Experiment, Run
+    experiment = Experiment(name="csv-exp")
+    temp_storage.save_experiment(experiment.to_dict())
+    run = Run(experiment_id=experiment.id, name="r1")
+    run.log_metric("accuracy", 0.8)
+    temp_storage.save_run(run.to_dict())
+    response = api.get(f"/experiments/{experiment.id}/snapshot.csv")
     assert response.status_code == 200
-    snapshot = response.json()
-    assert snapshot["snapshot_type"] == "run"
-    assert snapshot["experiment"]["id"] == experiment["id"]
-    assert snapshot["artifact_manifest"][0]["name"] == "notes.txt"
-    assert len(snapshot["artifact_manifest"][0]["checksum_sha256"]) == 64
-
-    assert api.get("/runs/missing/snapshot").status_code == 404
+    reader = csv.DictReader(io.StringIO(response.text))
+    rows = list(reader)
+    assert len(rows) == 1
+    assert rows[0]["run_name"] == "r1"
+    assert float(rows[0]["accuracy"]) == 0.8
 
 
-def test_client_fetches_and_exports_run_snapshot(tracker, tmp_path):
-    experiment = tracker.create_experiment("portable")
-    tracker.update_experiment(experiment["id"], {"description": "kept"})
-    run = tracker.create_run(experiment["id"], "baseline", params={"seed": 3})
-    tracker.log_metric(run["id"], "accuracy", 0.9, step=1)
+def test_snapshot_csv_endpoint_filters_metric_names(api, temp_storage) -> None:
+    from src.models import Experiment, Run
+    experiment = Experiment(name="csv-exp")
+    temp_storage.save_experiment(experiment.to_dict())
+    run = Run(experiment_id=experiment.id, name="r1")
+    run.log_metric("accuracy", 0.8)
+    run.log_metric("loss", 0.4)
+    temp_storage.save_run(run.to_dict())
+    response = api.get(
+        f"/experiments/{experiment.id}/snapshot.csv",
+        params={"metric_names": "accuracy"},
+    )
+    assert response.status_code == 200
+    reader = csv.DictReader(io.StringIO(response.text))
+    rows = list(reader)
+    assert "accuracy" in rows[0]
+    assert "loss" not in rows[0]
 
-    snapshot = tracker.run_snapshot(run["id"])
-    assert snapshot["run"]["metrics"][0]["value"] == 0.9
 
-    destination = tmp_path / "snapshots" / "run.json"
-    exported = tracker.export_run_snapshot(run["id"], str(destination))
-    assert Path(exported).exists()
-    saved = json.loads(destination.read_text(encoding="utf-8"))
-    assert saved["run"]["id"] == run["id"]
+def test_snapshot_csv_endpoint_404_for_missing_experiment(api) -> None:
+    response = api.get("/experiments/missing/snapshot.csv")
+    assert response.status_code == 404

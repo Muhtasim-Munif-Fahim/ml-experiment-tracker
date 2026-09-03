@@ -334,6 +334,18 @@ def export_run_notes(run_id: str, destination: Optional[str] = None):
 
 
 
+@app.get("/experiments/{exp_id}/timeline.json")
+def experiment_timeline(exp_id: str):
+    """Sorted lifecycle events of every run in an experiment."""
+    try:
+        events = storage.experiment_timeline(exp_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    return {"events": events, "count": len(events)}
+
+
+
+
 @app.get("/experiments/{exp_id}/snapshot.csv")
 def experiment_snapshot(
     exp_id: str,

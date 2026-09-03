@@ -1175,6 +1175,75 @@ class LocalStorageBackend:
         return candidates
 
 
+    def experiment_timeline(
+        self,
+        exp_id: str,
+    ) -> List[dict]:
+        """Return the merged lifecycle events of every run in an experiment.
+
+        Each entry is a dict with ``run_id``, ``run_name``, ``event``
+        (one of "created", "updated", "finished", "metric", "artifact",
+        "note", "tag"), ``timestamp``, and ``detail``. The list is
+        sorted by ``timestamp`` ascending so callers can render it as a
+        waterfall chart or feed. Unknown experiments raise ``KeyError``.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+
+        events: list[dict[str, object]] = []
+        for run in self.list_runs(exp_id):
+            run_id = run.get("id")
+            run_name = run.get("name")
+            for event_name, timestamp in (
+                ("created", run.get("created_at")),
+                ("updated", run.get("updated_at")),
+                ("finished", run.get("finished_at")),
+            ):
+                if not timestamp:
+                    continue
+                events.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "event": event_name,
+                    "timestamp": str(timestamp),
+                    "detail": "" if event_name != "finished" else str(run.get("error") or ""),
+                })
+            for metric in run.get("metrics", []) or []:
+                events.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "event": "metric",
+                    "timestamp": str(metric.get("timestamp") or run.get("created_at") or ""),
+                    "detail": f"{metric.get('name')}={metric.get('value')}",
+                })
+            for artifact in run.get("artifacts", []) or []:
+                events.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "event": "artifact",
+                    "timestamp": str(artifact.get("created_at") or run.get("created_at") or ""),
+                    "detail": str(artifact.get("name") or artifact.get("path") or ""),
+                })
+            for note in run.get("notes", []) or []:
+                events.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "event": "note",
+                    "timestamp": str(note.get("created_at") or ""),
+                    "detail": str(note.get("body") or "")[:120],
+                })
+            for tag_name, tag_value in (run.get("tags") or {}).items():
+                events.append({
+                    "run_id": run_id,
+                    "run_name": run_name,
+                    "event": "tag",
+                    "timestamp": str(run.get("updated_at") or run.get("created_at") or ""),
+                    "detail": f"{tag_name}={tag_value}",
+                })
+        events.sort(key=lambda event: (str(event.get("timestamp") or ""), str(event.get("event") or "")))
+        return events
+
+
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""
 

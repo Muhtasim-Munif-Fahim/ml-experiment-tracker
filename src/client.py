@@ -544,6 +544,14 @@ class ExperimentTrackerClient:
         response.raise_for_status()
         return response.json()
 
+    def experiment_timeline(self, exp_id: str) -> dict:
+        """Return the merged run-lifecycle events for an experiment."""
+        response = self._request_raw(
+            "GET", f"/experiments/{exp_id}/timeline.json"
+        )
+        response.raise_for_status()
+        return response.json()
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

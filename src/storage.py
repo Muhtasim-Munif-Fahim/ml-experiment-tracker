@@ -1133,6 +1133,48 @@ class LocalStorageBackend:
         return str(target)
 
 
+    def search_runs_sorted(
+        self,
+        *,
+        experiment_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: str = "created_at",
+        descending: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[dict]:
+        """List runs filtered by ``experiment_id`` and ``status``, sorted.
+
+        ``sort_by`` accepts any field present on the run record; unknown
+        fields fall back to ``created_at``. ``descending=True`` puts the
+        newest runs first. ``limit`` truncates the result without
+        raising. Returns the run records (one dict per run).
+        """
+        candidates: list[dict] = []
+        if experiment_id is not None:
+            candidates = list(self.list_runs(experiment_id))
+        else:
+            seen: set[str] = set()
+            for exp in self.list_experiments(include_archived=True):
+                for run in self.list_runs(exp.get("id")):
+                    if run.get("id") in seen:
+                        continue
+                    seen.add(run.get("id"))
+                    candidates.append(run)
+        if status is not None:
+            wanted = str(status)
+            candidates = [run for run in candidates if run.get("status") == wanted]
+        valid_sort_keys = {"created_at", "updated_at", "finished_at", "name", "status"}
+        if sort_by not in valid_sort_keys:
+            sort_by = "created_at"
+        candidates.sort(
+            key=lambda run: str(run.get(sort_by) or ""),
+            reverse=bool(descending),
+        )
+        if limit is not None and limit >= 0:
+            return candidates[: int(limit)]
+        return candidates
+
+
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""
 

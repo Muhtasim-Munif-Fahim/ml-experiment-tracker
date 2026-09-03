@@ -515,6 +515,35 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def search_runs_sorted(
+        self,
+        *,
+        experiment_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: str = "created_at",
+        descending: bool = True,
+        limit: Optional[int] = None,
+    ) -> dict:
+        """List runs with optional filters and a multi-field sort.
+
+        The ``/search/runs`` endpoint returns ``{"runs": [...], "total": N, "count": N}``.
+        ``experiment_id`` and ``status`` filter the result; ``sort_by`` and
+        ``descending`` control the ordering; ``limit`` truncates the result.
+        """
+        params: dict = {
+            "sort_by": sort_by,
+            "descending": "true" if descending else "false",
+        }
+        if experiment_id is not None:
+            params["experiment_id"] = experiment_id
+        if status is not None:
+            params["status"] = status
+        if limit is not None:
+            params["limit"] = str(int(limit))
+        response = self._request_raw("GET", "/search/runs", params=params)
+        response.raise_for_status()
+        return response.json()
+
     def track(self, name: str, description: str = "", tags: List[str] = None, params: dict = None) -> ExperimentContext:
         """Open an experiment context that creates a run on entry."""
         return ExperimentContext(self, name=name, description=description, tags=tags, params=params)

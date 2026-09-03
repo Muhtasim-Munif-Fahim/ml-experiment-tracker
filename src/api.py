@@ -370,6 +370,31 @@ def experiment_snapshot(
 
 
 
+@app.get("/search/runs")
+def search_runs_endpoint(
+    experiment_id: Optional[str] = None,
+    status: Optional[str] = None,
+    sort_by: str = "created_at",
+    descending: bool = True,
+    limit: Optional[int] = None,
+):
+    """List runs with optional filters and a multi-field sort."""
+    runs = storage.search_runs_sorted(
+        experiment_id=experiment_id,
+        status=status,
+        sort_by=sort_by,
+        descending=descending,
+        limit=limit,
+    )
+    return {
+        "runs": runs,
+        "count": len(runs),
+        "total": len(runs),
+    }
+
+
+
+
 @app.patch("/experiments/{exp_id}", response_model=dict)
 def update_experiment(exp_id: str, updates: ExperimentUpdate):
     exp = storage.load_experiment(exp_id)

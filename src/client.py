@@ -618,7 +618,7 @@ class ExperimentContext:
     def __enter__(self):
         exp = self.client.create_experiment(self.exp_name, self.exp_description, self.exp_tags)
         self.experiment = exp
-        run = self.client.create_run(exp["id"], name=f"run-{datetime.utcnow().isoformat()}", params=self.params)
+        run = self.client.create_run(exp["id"], name=f"run-{datetime.now(timezone.utc).isoformat()}", params=self.params)
         self.run = run
         return self
 

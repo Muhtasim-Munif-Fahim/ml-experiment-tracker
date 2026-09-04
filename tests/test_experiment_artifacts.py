@@ -17,7 +17,7 @@ def upload_artifact(api: TestClient, run_id: str, name: str, payload: bytes):
 
 def test_experiment_artifacts_lists_runs_newest_first(api, temp_storage):
     from src.models import Run
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     experiment = api.post("/experiments/", json={"name": "sweeps"}).json()
     base = datetime(2026, 8, 20, 9, 0, 0)
@@ -25,7 +25,7 @@ def test_experiment_artifacts_lists_runs_newest_first(api, temp_storage):
         f"/experiments/{experiment['id']}/runs/",
         json={"name": "early-run"},
     ).json()
-    seeded_at = datetime.utcnow() + timedelta(hours=2)
+    seeded_at = datetime.now(timezone.utc) + timedelta(hours=2)
     newer_run = Run(
         experiment_id=experiment["id"],
         name="late-run",

@@ -8,7 +8,7 @@ import json
 import mimetypes
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -414,7 +414,7 @@ def update_experiment(exp_id: str, updates: ExperimentUpdate):
         raise HTTPException(status_code=404, detail="Experiment not found")
     for key, value in updates.model_dump(exclude_unset=True).items():
         exp[key] = value
-    exp["updated_at"] = datetime.utcnow().isoformat()
+    exp["updated_at"] = datetime.now(timezone.utc).isoformat()
     storage.save_experiment(exp)
     return exp
 
@@ -625,10 +625,10 @@ def update_run(run_id: str, updates: RunUpdate):
             target_status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.ABORTED)
             and not run_data.get("finished_at")
         ):
-            changes["finished_at"] = datetime.utcnow().isoformat()
+            changes["finished_at"] = datetime.now(timezone.utc).isoformat()
     for key, value in changes.items():
         run_data[key] = value
-    run_data["updated_at"] = datetime.utcnow().isoformat()
+    run_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     storage.save_run(run_data)
     return run_data
 
@@ -728,7 +728,7 @@ def log_metrics(run_id: str, batch: MetricBatchCreate):
     run_data = storage.load_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     points = [
         {
             "name": name,
@@ -1068,7 +1068,7 @@ def health_check():
     """Report liveness plus current storage totals for readiness checks."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "storage": storage.storage_stats(),
     }
 

@@ -10,7 +10,7 @@ import hashlib
 import uuid
 import zipfile
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, List, Optional
 
@@ -104,7 +104,7 @@ class LocalStorageBackend:
         if experiment is None:
             return None
         experiment["archived"] = bool(archived)
-        experiment["updated_at"] = datetime.utcnow().isoformat()
+        experiment["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_experiment(experiment)
         return experiment
 
@@ -160,11 +160,11 @@ class LocalStorageBackend:
                     r for r in source["runs"]
                     if not (isinstance(r, dict) and r.get("id") == run_id)
                 ]
-                source["updated_at"] = datetime.utcnow().isoformat()
+                source["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self.save_experiment(source)
 
         run["experiment_id"] = target_exp_id
-        run["updated_at"] = datetime.utcnow().isoformat()
+        run["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_run(run)
 
         if isinstance(target.get("runs"), list):
@@ -178,7 +178,7 @@ class LocalStorageBackend:
                     "status": run.get("status"),
                     "created_at": run.get("created_at"),
                 })
-        target["updated_at"] = datetime.utcnow().isoformat()
+        target["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_experiment(target)
 
         return run
@@ -218,8 +218,8 @@ class LocalStorageBackend:
             "artifacts": [],
             "alerts": [],
             "notes": [],
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
             "error": None,
         }
@@ -265,8 +265,8 @@ class LocalStorageBackend:
                 "artifacts": [],
                 "alerts": [],
                 "notes": [],
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "finished_at": None,
                 "error": None,
             }
@@ -295,7 +295,7 @@ class LocalStorageBackend:
             raise ValueError("run tags are not a mapping")
         tags[name] = value
         run_data["tags"] = tags
-        run_data["updated_at"] = datetime.utcnow().isoformat()
+        run_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_run(run_data)
         return {"name": name, "value": value}
 
@@ -308,7 +308,7 @@ class LocalStorageBackend:
         if not isinstance(tags, dict) or name not in tags:
             return False
         del tags[name]
-        run_data["updated_at"] = datetime.utcnow().isoformat()
+        run_data["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save_run(run_data)
         return True
 
@@ -605,7 +605,7 @@ class LocalStorageBackend:
                 if not isinstance(updates["metadata"], dict):
                     raise ValueError("artifact metadata must be a mapping")
                 artifact["metadata"] = updates["metadata"]
-            run_data["updated_at"] = datetime.utcnow().isoformat()
+            run_data["updated_at"] = datetime.now(timezone.utc).isoformat()
             self.save_run(run_data)
             return artifact
         return None
@@ -665,7 +665,7 @@ class LocalStorageBackend:
         note = {
             "id": f"note_{uuid.uuid4().hex[:8]}",
             "body": body,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         run_data.setdefault("notes", []).append(note)
         self.save_run(run_data)
@@ -761,12 +761,12 @@ class LocalStorageBackend:
                             "threshold": rule.threshold,
                             "value": value,
                             "step": point.get("step"),
-                            "triggered_at": datetime.utcnow().isoformat(),
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
                         }
                     )
         if triggered:
             run_data.setdefault("alerts", []).extend(triggered)
-            run_data["updated_at"] = datetime.utcnow().isoformat()
+            run_data["updated_at"] = datetime.now(timezone.utc).isoformat()
             self.save_run(run_data)
         return triggered
 
@@ -835,7 +835,7 @@ class LocalStorageBackend:
         return {
             "schema_version": RUN_SNAPSHOT_VERSION,
             "snapshot_type": "run",
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "experiment": (
                 {"id": experiment["id"], "name": experiment.get("name", "")}
                 if experiment

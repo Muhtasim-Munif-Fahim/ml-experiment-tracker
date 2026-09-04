@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
@@ -63,7 +63,7 @@ class Metric:
     name: str
     value: float
     step: Optional[int] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
         return {
@@ -130,7 +130,7 @@ class Artifact:
     size_bytes: int
     checksum_sha256: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
         return {
@@ -193,8 +193,8 @@ class Run:
     tags: Dict[str, str] = field(default_factory=dict)
     alerts: List[Dict[str, Any]] = field(default_factory=list)
     notes: List[Dict[str, Any]] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
 
@@ -313,7 +313,7 @@ class Run:
 
     def finish(self, status: RunStatus = RunStatus.COMPLETED, error: Optional[str] = None) -> None:
         self.status = status
-        self.finished_at = datetime.utcnow()
+        self.finished_at = datetime.now(timezone.utc)
         if error:
             self.error = error
 
@@ -367,12 +367,12 @@ class Experiment:
     archived: bool = False
     tags: List[str] = field(default_factory=list)
     runs: List[Run] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def add_run(self, run: Run) -> None:
         self.runs.append(run)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def get_best_run(self, metric: str, maximize: bool = True) -> Optional[Run]:
         best = None

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, List, Optional
 
-from .models import AlertRule, Artifact, ArtifactType, Experiment, Run
+from .models import AlertRule, Artifact, ArtifactType, Experiment, Run, pearson_correlation
 
 EXPERIMENT_BUNDLE_VERSION = 1
 RUN_SNAPSHOT_VERSION = 1
@@ -969,6 +969,59 @@ class LocalStorageBackend:
             row = [run.get("id"), run.get("name")] + [latest[name] for name in metric_names]
             rows.append(row)
         return {"columns": columns, "rows": rows}
+
+    def experiment_parameter_correlation(
+        self,
+        exp_id: str,
+        metric_name: str,
+    ) -> List[dict]:
+        """Rank parameters by Pearson correlation with a target metric.
+
+        For every numeric parameter configured across the experiment's runs,
+        pairs the parameter value with each run's latest value of
+        ``metric_name`` and computes the Pearson coefficient. Returns entries
+        ``{"param_name", "correlation", "run_count"}`` sorted by absolute
+        correlation descending; parameters with fewer than two paired
+        observations or undefined correlation are omitted. Raises ``KeyError``
+        when the experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+
+        paired: Dict[str, List[tuple]] = {}
+        for run in self.list_runs(exp_id):
+            target = [
+                metric.get("value")
+                for metric in run.get("metrics", [])
+                if metric.get("name") == metric_name
+            ]
+            if not target:
+                continue
+            latest = float(target[-1])
+            params = run.get("params", {}) or {}
+            for name, value in params.items():
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                paired.setdefault(name, []).append((float(value), latest))
+
+        results: List[dict] = []
+        for name, observations in paired.items():
+            if len(observations) < 2:
+                continue
+            xs = [pair[0] for pair in observations]
+            ys = [pair[1] for pair in observations]
+            r = pearson_correlation(xs, ys)
+            if r is None:
+                continue
+            results.append(
+                {
+                    "param_name": name,
+                    "correlation": r,
+                    "run_count": len(observations),
+                }
+            )
+        results.sort(key=lambda entry: abs(entry["correlation"]), reverse=True)
+        return results
 
     def experiment_metric_long(
         self,

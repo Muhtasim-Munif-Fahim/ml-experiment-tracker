@@ -311,6 +311,18 @@ def experiment_metric_history(
     )
 
 
+@app.get("/experiments/{exp_id}/parameter-correlation", response_model=List[dict])
+def parameter_correlation(
+    exp_id: str,
+    metric: str = Query(...),
+):
+    """Rank parameters by Pearson correlation with a target metric across runs."""
+    try:
+        return storage.experiment_parameter_correlation(exp_id, metric)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+
+
 @app.get("/runs/{run_id}/notes.csv")
 def export_run_notes(run_id: str, destination: Optional[str] = None):
     """Export one run's notes as a CSV file."""

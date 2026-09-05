@@ -175,6 +175,27 @@ def smooth_metric_series(
     return result
 
 
+def pearson_correlation(xs: List[float], ys: List[float]) -> Optional[float]:
+    """Pearson correlation coefficient between two equal-length numeric series.
+
+    Returns ``None`` when the coefficient is undefined -- fewer than two
+    samples, mismatched lengths, or zero variance in either input -- so callers
+    can omit undefined entries rather than emitting a misleading value.
+    """
+    n = len(xs)
+    if n != len(ys) or n < 2:
+        return None
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    denom = (var_x * var_y) ** 0.5
+    if denom == 0.0:
+        return None
+    return cov / denom
+
+
 @dataclass
 class Artifact:
     name: str

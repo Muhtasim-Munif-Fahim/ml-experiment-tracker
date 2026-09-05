@@ -225,6 +225,14 @@ class ExperimentTrackerClient:
             "candidate_run_id": candidate_run_id
         })
 
+    def parameter_correlation(self, exp_id: str, metric_name: str) -> List[dict]:
+        """Rank parameters by Pearson correlation with a target metric."""
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/parameter-correlation",
+            params={"metric": metric_name},
+        )
+
     def search_runs_csv(
         self,
         status: str = None,

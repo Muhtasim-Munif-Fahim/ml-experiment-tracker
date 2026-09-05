@@ -122,6 +122,59 @@ def lttb_downsample(series: List[dict], points: int) -> List[dict]:
     return sampled
 
 
+def smooth_metric_series(
+    series: List[dict], window: int = 5, method: str = "ema"
+) -> List[dict]:
+    """Smooth a metric series while keeping every original point.
+
+    Unlike :func:`lttb_downsample`, which reduces the number of samples, this
+    helper preserves the full resolution of the series and only blends the
+    ``value`` of each point to suppress step noise in training curves.
+
+    ``method`` selects the blending rule:
+
+    * ``"ema"`` -- exponential moving average with span ``window``
+      (``alpha = 2 / (window + 1)``). The first point seeds the filter and is
+      returned unchanged; each subsequent point is ``alpha * value +
+      (1 - alpha) * previous``.
+    * ``"sma"`` -- simple moving average over a trailing window of up to
+      ``window`` points. Positions near the start, where a full window is not
+      yet available, use the expanding mean of the points seen so far.
+
+    The function never mutates its inputs; every returned sample is a shallow
+    copy carrying the original ``step`` and ``timestamp`` alongside the
+    smoothed ``value``.
+    """
+    if method not in ("ema", "sma"):
+        raise ValueError(f"method must be 'ema' or 'sma', got {method!r}")
+    if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+        raise ValueError("window must be a positive integer")
+    if not series:
+        return []
+
+    values = [float(sample.get("value", 0)) for sample in series]
+    smoothed: List[float] = []
+    if method == "ema":
+        alpha = 2.0 / (window + 1.0)
+        ema = values[0]
+        smoothed.append(ema)
+        for value in values[1:]:
+            ema = alpha * value + (1.0 - alpha) * ema
+            smoothed.append(ema)
+    else:  # sma
+        for index, value in enumerate(values):
+            start = max(0, index - window + 1)
+            segment = values[start : index + 1]
+            smoothed.append(sum(segment) / len(segment))
+
+    result: List[dict] = []
+    for index, sample in enumerate(series):
+        entry = dict(sample)
+        entry["value"] = smoothed[index]
+        result.append(entry)
+    return result
+
+
 @dataclass
 class Artifact:
     name: str

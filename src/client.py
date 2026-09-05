@@ -332,6 +332,20 @@ class ExperimentTrackerClient:
             params={"points": points},
         )
 
+    def smooth_metric(
+        self,
+        run_id: str,
+        metric_name: str,
+        window: int = 5,
+        method: str = "ema",
+    ) -> List[dict]:
+        """Fetch a metric series with point values smoothed, full resolution kept."""
+        return self._request(
+            "GET",
+            f"/runs/{run_id}/metrics/{metric_name}/smooth",
+            params={"window": window, "method": method},
+        )
+
     def run_leaderboard(
         self,
         exp_id: str,

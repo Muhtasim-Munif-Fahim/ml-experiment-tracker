@@ -196,6 +196,20 @@ def pearson_correlation(xs: List[float], ys: List[float]) -> Optional[float]:
     return cov / denom
 
 
+def standardize_series(
+    values: List[float], mean: float, std: float
+) -> List[float]:
+    """Return the z-scores of ``values`` given a ``mean`` and ``std``.
+
+    A zero standard deviation collapses every point to ``0.0`` (the series is
+    already constant), so callers can standardize without guarding against
+    division-by-zero noise themselves.
+    """
+    if std == 0.0:
+        return [0.0 for _ in values]
+    return [(value - mean) / std for value in values]
+
+
 @dataclass
 class Artifact:
     name: str

@@ -233,6 +233,26 @@ class ExperimentTrackerClient:
             params={"metric": metric_name},
         )
 
+    def metric_baseline(self, exp_id: str, metric_name: str) -> dict:
+        """Fetch experiment-wide descriptive statistics for one metric."""
+        return self._request(
+            "GET", f"/experiments/{exp_id}/metrics/{metric_name}/stats"
+        )
+
+    def standardize_metric(
+        self,
+        exp_id: str,
+        run_id: str,
+        metric_name: str,
+        outlier_threshold: float = 2.0,
+    ) -> dict:
+        """Z-score standardize a run's metric series against the experiment baseline."""
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/runs/{run_id}/metrics/{metric_name}/standardized",
+            params={"outlier_threshold": outlier_threshold},
+        )
+
     def search_runs_csv(
         self,
         status: str = None,

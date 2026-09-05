@@ -323,6 +323,31 @@ def parameter_correlation(
         raise HTTPException(status_code=404, detail="Experiment not found") from exc
 
 
+@app.get("/experiments/{exp_id}/metrics/{metric_name}/stats", response_model=dict)
+def experiment_metric_stats(exp_id: str, metric_name: str):
+    """Experiment-wide descriptive statistics for one metric's observations."""
+    try:
+        return storage.experiment_metric_baseline(exp_id, metric_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+
+
+@app.get("/experiments/{exp_id}/runs/{run_id}/metrics/{metric_name}/standardized", response_model=dict)
+def standardized_metric(
+    exp_id: str,
+    run_id: str,
+    metric_name: str,
+    outlier_threshold: float = Query(2.0, ge=0),
+):
+    """Z-score standardize one run's metric series against the experiment baseline."""
+    try:
+        return storage.standardize_run_metric(
+            exp_id, run_id, metric_name, outlier_threshold=outlier_threshold
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/runs/{run_id}/notes.csv")
 def export_run_notes(run_id: str, destination: Optional[str] = None):
     """Export one run's notes as a CSV file."""

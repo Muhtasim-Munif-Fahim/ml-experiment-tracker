@@ -14,10 +14,55 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, List, Optional
 
-from .models import AlertRule, Artifact, ArtifactType, Experiment, Run, pearson_correlation
+from .models import (
+    AlertRule,
+    Artifact,
+    ArtifactType,
+    Experiment,
+    Run,
+    pearson_correlation,
+    standardize_series,
+)
 
 EXPERIMENT_BUNDLE_VERSION = 1
 RUN_SNAPSHOT_VERSION = 1
+
+
+def _median(sorted_values: List[float]) -> float:
+    n = len(sorted_values)
+    mid = n // 2
+    if n % 2 == 1:
+        return sorted_values[mid]
+    return (sorted_values[mid - 1] + sorted_values[mid]) / 2.0
+
+
+def _describe_metric_values(values: List[float]) -> dict:
+    """Descriptive statistics over a flat list of numeric observations."""
+
+    count = len(values)
+    if count == 0:
+        return {
+            "count": 0,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "median": None,
+        }
+    mean = sum(values) / count
+    if count >= 2:
+        variance = sum((value - mean) ** 2 for value in values) / (count - 1)
+    else:
+        variance = 0.0
+    ordered = sorted(values)
+    return {
+        "count": count,
+        "mean": mean,
+        "std": variance ** 0.5,
+        "min": ordered[0],
+        "max": ordered[-1],
+        "median": _median(ordered),
+    }
 
 
 class StorageBackend(ABC):
@@ -1086,6 +1131,87 @@ class LocalStorageBackend:
         ))
         return rows
 
+    def experiment_metric_baseline(
+        self,
+        exp_id: str,
+        metric_name: str,
+    ) -> dict:
+        """Compute experiment-wide descriptive statistics for one metric.
+
+        Aggregates every recorded observation of ``metric_name`` across all
+        runs of the experiment and returns ``count``, ``mean``, sample
+        ``std``, ``min``, ``max`` and ``median``. Raises ``KeyError`` when the
+        experiment is missing; a metric with no observations yields zero count
+        and ``None`` statistics.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        values: List[float] = []
+        for run in self.list_runs(exp_id):
+            for metric in run.get("metrics", []):
+                if metric.get("name") == metric_name:
+                    try:
+                        values.append(float(metric.get("value")))
+                    except (TypeError, ValueError):
+                        continue
+        return _describe_metric_values(values)
+
+    def standardize_run_metric(
+        self,
+        exp_id: str,
+        run_id: str,
+        metric_name: str,
+        outlier_threshold: float = 2.0,
+    ) -> dict:
+        """Z-score standardize one run's metric series against the experiment baseline.
+
+        Returns ``{"metric_name", "baseline": {...}, "points": [...]}`` where
+        each point carries ``step``, ``value`` and ``zscore``; points whose
+        absolute z-score exceeds ``outlier_threshold`` are flagged
+        ``is_outlier``. The baseline is derived from every observation of the
+        metric across all runs of the experiment. Raises ``KeyError`` for a
+        missing experiment or run.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+
+        baseline = self.experiment_metric_baseline(exp_id, metric_name)
+        mean = baseline["mean"]
+        std = baseline["std"]
+        steps: List[Any] = []
+        values: List[float] = []
+        for metric in run.get("metrics", []):
+            if metric.get("name") != metric_name:
+                continue
+            try:
+                values.append(float(metric.get("value")))
+            except (TypeError, ValueError):
+                continue
+            steps.append(metric.get("step"))
+
+        if mean is None or std is None:
+            zscores = [0.0 for _ in values]
+        else:
+            zscores = standardize_series(values, mean, std)
+
+        points: List[dict] = []
+        for step, value, zscore in zip(steps, values, zscores):
+            points.append(
+                {
+                    "step": step,
+                    "value": value,
+                    "zscore": zscore,
+                    "is_outlier": abs(zscore) > outlier_threshold,
+                }
+            )
+        return {
+            "metric_name": metric_name,
+            "baseline": baseline,
+            "points": points,
+        }
 
     def experiment_snapshot(
         self,

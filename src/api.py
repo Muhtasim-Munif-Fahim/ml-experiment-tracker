@@ -642,6 +642,15 @@ def get_run(run_id: str):
     return run
 
 
+@app.get("/runs/{run_id}/status-history", response_model=List[dict])
+def run_status_history(run_id: str):
+    """Return the recorded status-transition audit log for a run."""
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run_data.get("status_history", [])
+
+
 @app.patch("/runs/{run_id}", response_model=dict)
 def update_run(run_id: str, updates: RunUpdate):
     run_data = storage.load_run(run_id)
@@ -664,6 +673,15 @@ def update_run(run_id: str, updates: RunUpdate):
             and not run_data.get("finished_at")
         ):
             changes["finished_at"] = datetime.now(timezone.utc).isoformat()
+        if target_status is not current_status:
+            run_data.setdefault("status_history", []).append(
+                {
+                    "from": current_status.value,
+                    "to": target_status.value,
+                    "error": changes.get("error"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
     for key, value in changes.items():
         run_data[key] = value
     run_data["updated_at"] = datetime.now(timezone.utc).isoformat()

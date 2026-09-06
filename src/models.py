@@ -285,6 +285,7 @@ class Run:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
+    status_history: List[Dict[str, Any]] = field(default_factory=list)
 
     def log_param(self, name: str, value: Any) -> None:
         self.params[name] = value
@@ -422,6 +423,7 @@ class Run:
             "updated_at": self.updated_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "error": self.error,
+            "status_history": [dict(entry) for entry in self.status_history],
         }
 
     @classmethod
@@ -444,6 +446,7 @@ class Run:
         run.error = data.get("error")
         run.alerts = [dict(alert) for alert in data.get("alerts", [])]
         run.notes = [dict(note) for note in data.get("notes", [])]
+        run.status_history = [dict(entry) for entry in data.get("status_history", [])]
         return run
 
 

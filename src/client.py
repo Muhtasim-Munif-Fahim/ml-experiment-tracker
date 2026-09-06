@@ -163,6 +163,10 @@ class ExperimentTrackerClient:
     def get_run(self, run_id: str) -> dict:
         return self._request("GET", f"/runs/{run_id}")
 
+    def run_status_history(self, run_id: str) -> List[dict]:
+        """Fetch the status-transition audit log recorded for a run."""
+        return self._request("GET", f"/runs/{run_id}/status-history")
+
     def list_runs(
         self,
         exp_id: str,

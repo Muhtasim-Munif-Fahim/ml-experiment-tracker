@@ -393,6 +393,50 @@ class ExperimentTrackerClient:
             params={"metric": metric, "maximize": maximize, "limit": limit},
         )
 
+    def cross_experiment_leaderboard(
+        self,
+        metric: str,
+        maximize: bool = True,
+        limit: int = 10,
+        include_archived: bool = False,
+    ) -> List[dict]:
+        """Rank runs across every experiment by the latest value of one metric.
+
+        Each entry carries ``experiment_id`` so the winning run's originating
+        experiment can be identified.
+        """
+        params = {
+            "metric": metric,
+            "maximize": maximize,
+            "limit": limit,
+            "include_archived": include_archived,
+        }
+        return self._request("GET", "/leaderboard", params=params)
+
+    def cross_experiment_leaderboard_csv(
+        self,
+        metric: str,
+        maximize: bool = True,
+        limit: int = 10,
+        include_archived: bool = False,
+        destination: Optional[str] = None,
+    ) -> str:
+        """Fetch the cross-experiment leaderboard as CSV text, optionally saving it."""
+        params = {
+            "metric": metric,
+            "maximize": maximize,
+            "limit": limit,
+            "include_archived": include_archived,
+        }
+        response = self._request_raw("GET", "/leaderboard.csv", params=params)
+        response.raise_for_status()
+        text = response.text
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return text
+
     def run_leaderboard_csv(
         self,
         exp_id: str,

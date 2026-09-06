@@ -700,6 +700,61 @@ class LocalStorageBackend:
             ranked = ranked[:limit]
         return ranked
 
+    def cross_experiment_leaderboard(
+        self,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+        limit: Optional[int] = None,
+        include_archived: bool = False,
+    ) -> List[dict]:
+        """Rank runs across every experiment by their latest value of a metric.
+
+        Unlike :meth:`run_leaderboard`, which ranks runs within a single
+        experiment, this helper aggregates the latest recorded value of
+        ``metric_name`` from every run of every experiment so the single best
+        run can be located regardless of which experiment produced it. Each
+        entry carries ``experiment_id``, ``run_id``, ``name``, ``value`` and
+        ``step``; runs without any observation for the metric are omitted.
+
+        ``include_archived`` opts into soft-archived experiments (excluded by
+        default) and ``limit`` truncates the ranked output without raising.
+        Raises ``ValueError`` for an empty ``metric_name`` or a negative limit.
+        """
+        if not metric_name:
+            raise ValueError("metric_name is required")
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be positive")
+
+        ranked = []
+        for experiment in self.list_experiments(include_archived=include_archived):
+            experiment_id = experiment["id"]
+            for run in self.list_runs(experiment_id):
+                values = [
+                    metric.get("value")
+                    for metric in run.get("metrics", [])
+                    if metric.get("name") == metric_name
+                ]
+                if not values:
+                    continue
+                step = None
+                for metric in run.get("metrics", []):
+                    if metric.get("name") == metric_name:
+                        step = metric.get("step")
+                ranked.append(
+                    {
+                        "experiment_id": experiment_id,
+                        "run_id": run.get("id"),
+                        "name": run.get("name"),
+                        "value": float(values[-1]),
+                        "step": step,
+                    }
+                )
+        ranked.sort(key=lambda entry: entry["value"], reverse=maximize)
+        if limit is not None:
+            ranked = ranked[:limit]
+        return ranked
+
     def add_note(self, run_id: str, body: str) -> dict:
         """Append a markdown note to a run and return the stored note."""
         run_data = self.load_run(run_id)

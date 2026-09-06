@@ -959,6 +959,69 @@ def run_leaderboard_csv(
     )
 
 
+@app.get("/leaderboard", response_model=List[dict])
+def cross_experiment_leaderboard(
+    metric: str = Query(...),
+    maximize: bool = True,
+    limit: int = Query(10, ge=1),
+    include_archived: bool = False,
+):
+    """Rank runs across every experiment by the latest value of one metric.
+
+    Each entry carries ``experiment_id``, ``run_id``, ``name``, ``value`` and
+    ``step`` so callers can locate the single best run for a metric regardless
+    of which experiment it belongs to.
+    """
+    try:
+        return storage.cross_experiment_leaderboard(
+            metric,
+            maximize=maximize,
+            limit=limit,
+            include_archived=include_archived,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/leaderboard.csv")
+def cross_experiment_leaderboard_csv(
+    metric: str = Query(...),
+    maximize: bool = True,
+    limit: int = Query(10, ge=1),
+    include_archived: bool = False,
+):
+    """Download the cross-experiment leaderboard as CSV with rank numbers."""
+    try:
+        ranked = storage.cross_experiment_leaderboard(
+            metric,
+            maximize=maximize,
+            limit=limit,
+            include_archived=include_archived,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    rows = [
+        [
+            rank,
+            entry["experiment_id"],
+            entry["run_id"],
+            entry["name"],
+            entry["value"],
+            entry["step"],
+        ]
+        for rank, entry in enumerate(ranked, start=1)
+    ]
+    return Response(
+        content=render_csv(
+            ["rank", "experiment_id", "run_id", "name", "value", "step"], rows
+        ),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="cross-experiment-leaderboard.csv"'
+        },
+    )
+
+
 @app.post("/experiments/{exp_id}/runs/compare", response_model=dict)
 def compare_runs_endpoint(exp_id: str, request: RunCompareRequest):
     """Compare parameters and latest metric values between two runs."""

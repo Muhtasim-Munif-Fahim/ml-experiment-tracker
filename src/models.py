@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -273,6 +274,161 @@ def standardize_series(
     if std == 0.0:
         return [0.0 for _ in values]
     return [(value - mean) / std for value in values]
+
+
+def _betacf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the incomplete beta function (Lentz's method)."""
+
+    max_iterations = 200
+    epsilon = 3.0e-16
+    tiny = 1.0e-300
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+    for iteration in range(1, max_iterations + 1):
+        m2 = 2 * iteration
+        aa = iteration * (b - iteration) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + iteration) * (qab + iteration) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < epsilon:
+            break
+    return h
+
+
+def _betai(a: float, b: float, x: float) -> float:
+    """Regularized incomplete beta function I_x(a, b)."""
+
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    log_beta = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    front = math.exp(log_beta + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def _student_t_two_sided_p_value(t_statistic: float, degrees_of_freedom: int) -> float:
+    """Two-sided p-value for a Student-t statistic (pure-Python, no scipy)."""
+
+    if degrees_of_freedom <= 0:
+        return 1.0
+    x = degrees_of_freedom / (degrees_of_freedom + t_statistic * t_statistic)
+    return _betai(degrees_of_freedom / 2.0, 0.5, x)
+
+
+def metric_trend(series: List[dict], *, alpha: float = 0.05) -> Optional[dict]:
+    """Ordinary least-squares trend of a metric over its step.
+
+    Regresses ``value`` on ``step`` and returns the slope, intercept, R-squared,
+    standard error, t-statistic, two-sided p-value and a significance flag for
+    the slope. The p-value is derived from the Student-t distribution via an
+    in-house regularized incomplete beta function, so no external statistics
+    stack is required. Points without a numeric step are skipped; fewer than two
+    usable points (or a degenerate, step-less abscissa) yields ``None``.
+
+    ``alpha`` is the significance level applied to the slope's p-value; the
+    result is flagged significant when ``p_value < alpha`` and must lie in the
+    interval ``(0, 1]``. ``direction`` is ``"increasing"`` when the slope is
+    positive, ``"decreasing"`` when it is negative and ``"flat"`` at exactly zero.
+    """
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("alpha must lie in the interval (0, 1]")
+    sampled: List[tuple] = []
+    seen: set = set()
+    for point in series:
+        step = point.get("step")
+        if step is None:
+            continue
+        try:
+            x = float(step)
+            y = float(point.get("value", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if x in seen:
+            continue
+        seen.add(x)
+        sampled.append((x, y))
+    n = len(sampled)
+    if n < 2:
+        return None
+
+    mean_x = sum(sample[0] for sample in sampled) / n
+    mean_y = sum(sample[1] for sample in sampled) / n
+    sxx = sum((sample[0] - mean_x) ** 2 for sample in sampled)
+    sxy = sum((sample[0] - mean_x) * (sample[1] - mean_y) for sample in sampled)
+    if sxx == 0.0:
+        return None
+    slope = sxy / sxx
+    intercept = mean_y - slope * mean_x
+    ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in sampled)
+    ss_tot = sum((y - mean_y) ** 2 for _, y in sampled)
+    if ss_tot == 0.0:
+        r_squared = 1.0 if ss_res == 0.0 else 0.0
+    else:
+        r_squared = 1.0 - ss_res / ss_tot
+
+    if n > 2 and ss_res > 0.0:
+        residual_variance = ss_res / (n - 2)
+        std_err = math.sqrt(residual_variance / sxx)
+        t_statistic = slope / std_err
+        p_value = _student_t_two_sided_p_value(t_statistic, n - 2)
+        significant = p_value < alpha
+    else:
+        # Perfect fit (zero residual): the slope is exactly determined rather
+        # than estimated from noise. A non-zero slope is a real trend
+        # (p -> 0); a zero slope is a flat series with no trend.
+        std_err = 0.0
+        t_statistic = None
+        if slope != 0.0:
+            p_value = 0.0
+            significant = True
+        else:
+            p_value = 1.0
+            significant = False
+
+    if slope > 0.0:
+        direction = "increasing"
+    elif slope < 0.0:
+        direction = "decreasing"
+    else:
+        direction = "flat"
+
+    return {
+        "n_points": n,
+        "slope": slope,
+        "intercept": intercept,
+        "r_squared": r_squared,
+        "std_err": std_err,
+        "t_statistic": t_statistic,
+        "p_value": p_value,
+        "alpha": alpha,
+        "direction": direction,
+        "significant": significant,
+    }
 
 
 @dataclass

@@ -29,6 +29,7 @@ from .models import (
     interpolate_metric_series,
     lttb_downsample,
     smooth_metric_series,
+    metric_trend,
     parse_run_status,
     validate_status_transition,
 )
@@ -345,6 +346,27 @@ def standardized_metric(
         return storage.standardize_run_metric(
             exp_id, run_id, metric_name, outlier_threshold=outlier_threshold
         )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/runs/{run_id}/metrics/{metric_name}/trend", response_model=dict)
+def run_metric_trend(
+    run_id: str,
+    metric_name: str,
+    alpha: float = Query(0.05, gt=0.0, le=1.0),
+):
+    """Ordinary least-squares trend of a metric over its step.
+
+    Regresses ``value`` on ``step`` and returns the slope, intercept,
+    R-squared, standard error, t-statistic, two-sided p-value and a
+    significance flag (``p_value < alpha``). The p-value is derived from the
+    Student-t distribution in-process, so no external statistics library is
+    required. ``trend`` is ``null`` when the metric has fewer than two usable
+    points.
+    """
+    try:
+        return storage.run_metric_trend(run_id, metric_name, alpha=alpha)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

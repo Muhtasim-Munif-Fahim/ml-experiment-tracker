@@ -257,6 +257,22 @@ class ExperimentTrackerClient:
             params={"outlier_threshold": outlier_threshold},
         )
 
+    def metric_trend(
+        self, run_id: str, metric_name: str, alpha: float = 0.05
+    ) -> dict:
+        """Fetch the OLS regression trend of a run metric over its step.
+
+        Returns ``{"metric_name", "trend"}`` where ``trend`` carries the slope,
+        intercept, R-squared, standard error, t-statistic, two-sided p-value and
+        a significance flag (p_value < alpha), or ``None`` when the metric has
+        fewer than two usable points.
+        """
+        return self._request(
+            "GET",
+            f"/runs/{run_id}/metrics/{metric_name}/trend",
+            params={"alpha": alpha},
+        )
+
     def search_runs_csv(
         self,
         status: str = None,

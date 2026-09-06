@@ -20,6 +20,7 @@ from .models import (
     ArtifactType,
     Experiment,
     Run,
+    metric_trend,
     pearson_correlation,
     standardize_series,
 )
@@ -1266,6 +1267,29 @@ class LocalStorageBackend:
             "metric_name": metric_name,
             "baseline": baseline,
             "points": points,
+        }
+
+    def run_metric_trend(
+        self, run_id: str, metric_name: str, *, alpha: float = 0.05
+    ) -> dict:
+        """Ordinary least-squares trend of a run's metric over its step.
+
+        Returns ``{"metric_name", "trend"}`` where ``trend`` is the result of
+        :func:`metric_trend` (or ``None`` when the metric has too few usable
+        observations to fit a line). Raises ``KeyError`` when the run or
+        experiment does not exist.
+        """
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        series = [
+            metric
+            for metric in run.get("metrics", [])
+            if metric.get("name") == metric_name
+        ]
+        return {
+            "metric_name": metric_name,
+            "trend": metric_trend(series, alpha=alpha),
         }
 
     def experiment_snapshot(

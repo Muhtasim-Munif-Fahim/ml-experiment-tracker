@@ -175,6 +175,71 @@ def smooth_metric_series(
     return result
 
 
+def interpolate_metric_series(
+    series: List[dict], max_gap: Optional[int] = None
+) -> List[dict]:
+    """Fill integer step gaps in a metric series with linear interpolation.
+
+    Unlike :func:`smooth_metric_series` (which blends each point's value) and
+    :func:`lttb_downsample` (which reduces the number of samples), this helper
+    preserves every recorded point and inserts new points at the missing
+    integer steps between two observed samples, estimating their ``value`` by
+    linearly interpolating between the surrounding known points. Each inserted
+    point inherits the ``name`` and timestamp of the preceding known sample.
+
+    ``max_gap`` caps how many consecutive missing steps may be filled: a gap
+    larger than ``max_gap`` is left untouched (the surrounding known points are
+    still emitted). When ``None`` every gap is filled. Returns copies of the
+    samples, never the originals.
+    """
+    if max_gap is not None:
+        if not isinstance(max_gap, int) or isinstance(max_gap, bool) or max_gap < 1:
+            raise ValueError("max_gap must be a positive integer")
+    if not series:
+        return []
+
+    indexed: List[tuple] = []
+    for point in series:
+        step = point.get("step")
+        if step is None:
+            raise ValueError("metric points must carry a step to interpolate")
+        indexed.append((int(step), float(point.get("value", 0.0)), dict(point)))
+    indexed.sort(key=lambda item: item[0])
+
+    seen: set[int] = set()
+    unique: List[tuple] = []
+    for entry in indexed:
+        if entry[0] in seen:
+            continue
+        seen.add(entry[0])
+        unique.append(entry)
+
+    if not unique:
+        return []
+
+    result: List[dict] = []
+    for index, (step, value, point) in enumerate(unique):
+        result.append(point)
+        if index == len(unique) - 1:
+            break
+        next_step, next_value, _ = unique[index + 1]
+        span = next_step - step
+        gap = span - 1
+        if gap < 1:
+            continue
+        if max_gap is not None and gap > max_gap:
+            continue
+        for offset in range(1, gap + 1):
+            interpolated = dict(point)
+            interpolated["step"] = step + offset
+            fraction = offset / span
+            interpolated["value"] = value + (next_value - value) * fraction
+            result.append(interpolated)
+
+    result.sort(key=lambda entry: entry.get("step"))
+    return result
+
+
 def pearson_correlation(xs: List[float], ys: List[float]) -> Optional[float]:
     """Pearson correlation coefficient between two equal-length numeric series.
 

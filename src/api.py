@@ -26,6 +26,7 @@ from .models import (
     Metric,
     Artifact,
     ArtifactType,
+    interpolate_metric_series,
     lttb_downsample,
     smooth_metric_series,
     parse_run_status,
@@ -848,6 +849,33 @@ def smooth_metric_history(
     ]
     try:
         return smooth_metric_series(series, window=window, method=method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/runs/{run_id}/metrics/{metric_name}/interpolated", response_model=List[dict])
+def interpolate_metric_history(
+    run_id: str,
+    metric_name: str,
+    max_gap: Optional[int] = Query(None, ge=1),
+):
+    """Fill integer step gaps in a metric series with linear interpolation.
+
+    Unlike :func:`smooth_metric_series`, which blends each point's value, this
+    inserts synthetic points at the missing integer steps between two observed
+    samples so plotting libraries receive a continuous training curve. ``max_gap``
+    limits how many consecutive steps may be filled; larger gaps are left open.
+    """
+    run_data = storage.load_run(run_id)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    series = [
+        metric
+        for metric in run_data.get("metrics", [])
+        if metric.get("name") == metric_name
+    ]
+    try:
+        return interpolate_metric_series(series, max_gap=max_gap)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

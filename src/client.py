@@ -378,6 +378,27 @@ class ExperimentTrackerClient:
             params={"window": window, "method": method},
         )
 
+    def interpolate_metric(
+        self,
+        run_id: str,
+        metric_name: str,
+        max_gap: Optional[int] = None,
+    ) -> List[dict]:
+        """Fetch a metric series with integer step gaps filled by linear interpolation.
+
+        ``max_gap`` caps how many consecutive missing steps may be filled; a larger
+        gap is left untouched. Each interpolated point inherits the ``name`` and
+        timestamp of the preceding known sample.
+        """
+        params = {}
+        if max_gap is not None:
+            params["max_gap"] = str(int(max_gap))
+        return self._request(
+            "GET",
+            f"/runs/{run_id}/metrics/{metric_name}/interpolated",
+            params=params,
+        )
+
     def run_leaderboard(
         self,
         exp_id: str,

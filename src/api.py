@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Form, Request, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, Form, Request, UploadFile, File, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -980,6 +980,23 @@ def run_leaderboard(
         return storage.run_leaderboard(
             exp_id, metric, maximize=maximize, limit=limit
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/experiments/{exp_id}/pareto", response_model=List[dict])
+def experiment_pareto_front(
+    exp_id: str,
+    objectives: List[dict] = Body(...),
+    include_dominated: bool = False,
+):
+    """Select the runs not beaten on every objective at once."""
+    try:
+        return storage.experiment_pareto_front(
+            exp_id, objectives, include_dominated=include_dominated
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

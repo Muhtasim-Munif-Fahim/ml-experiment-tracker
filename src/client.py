@@ -474,6 +474,21 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def experiment_pareto_front(
+        self,
+        exp_id: str,
+        objectives: List[dict],
+        include_dominated: bool = False,
+    ) -> List[dict]:
+        """Select the runs not beaten on every objective at once."""
+
+        return self._request(
+            "POST",
+            f"/experiments/{exp_id}/pareto",
+            params={"include_dominated": include_dominated},
+            json=objectives,
+        )
+
     def run_leaderboard_csv(
         self,
         exp_id: str,

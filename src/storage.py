@@ -1502,6 +1502,120 @@ class LocalStorageBackend:
         return events
 
 
+    def experiment_pareto_front(
+        self,
+        exp_id: str,
+        objectives: List[dict],
+        *,
+        include_dominated: bool = False,
+    ) -> List[dict]:
+        """Select the runs that are not beaten on every objective at once.
+
+        A leaderboard sorts by one metric, but real model selection trades
+        objectives off against each other -- accuracy against latency,
+        against model size, against cost. Sorting by accuracy alone hides the
+        run that gave up half a point for a 10x speedup.
+
+        A run dominates another when it is at least as good on every
+        objective and strictly better on at least one. The runs nothing
+        dominates form the Pareto front: the set worth choosing between, with
+        every strictly worse option removed.
+
+        ``objectives`` is a list of ``{"metric": name, "maximize": bool}``
+        entries; ``maximize`` defaults to True. Runs missing a value for any
+        objective are excluded, since a run cannot be compared on an
+        objective it never recorded. Each run's latest value of a metric is
+        used, matching ``run_leaderboard``.
+
+        Returns ``{"run_id", "name", "values", "dominated_count", "rank"}``
+        entries, where ``values`` maps each objective metric to that run's
+        value and ``dominated_count`` is how many other runs it beats
+        outright. Front members carry ``rank`` 0 and are ordered by
+        ``dominated_count`` descending, so the run winning on the broadest
+        set of comparisons appears first. With ``include_dominated`` the
+        dominated runs follow, ranked by how many runs dominate them.
+
+        Raises ``KeyError`` when the experiment does not exist and
+        ``ValueError`` when no usable objective is given.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        if not objectives:
+            raise ValueError("at least one objective is required")
+
+        parsed: List[tuple] = []
+        for objective in objectives:
+            name = objective.get("metric")
+            if not name:
+                raise ValueError("each objective requires a metric name")
+            parsed.append((str(name), bool(objective.get("maximize", True))))
+
+        candidates: List[dict] = []
+        for run in self.list_runs(exp_id):
+            values: Dict[str, float] = {}
+            complete = True
+            for name, _maximize in parsed:
+                recorded = [
+                    metric.get("value")
+                    for metric in run.get("metrics", [])
+                    if metric.get("name") == name
+                ]
+                if not recorded or recorded[-1] is None:
+                    complete = False
+                    break
+                values[name] = float(recorded[-1])
+            if not complete:
+                continue
+            candidates.append(
+                {"run_id": run.get("id"), "name": run.get("name"), "values": values}
+            )
+
+        def _dominates(better: dict, worse: dict) -> bool:
+            strictly_better = False
+            for name, maximize in parsed:
+                a, b = better["values"][name], worse["values"][name]
+                if maximize:
+                    if a < b:
+                        return False
+                    if a > b:
+                        strictly_better = True
+                else:
+                    if a > b:
+                        return False
+                    if a < b:
+                        strictly_better = True
+            # Equal on every objective is not domination: neither run is the
+            # one to discard.
+            return strictly_better
+
+        results: List[dict] = []
+        for candidate in candidates:
+            dominated_by = sum(
+                1 for other in candidates if other is not candidate and _dominates(other, candidate)
+            )
+            dominates = sum(
+                1 for other in candidates if other is not candidate and _dominates(candidate, other)
+            )
+            results.append(
+                {
+                    "run_id": candidate["run_id"],
+                    "name": candidate["name"],
+                    "values": candidate["values"],
+                    "dominated_count": dominates,
+                    "rank": dominated_by,
+                }
+            )
+
+        front = [entry for entry in results if entry["rank"] == 0]
+        front.sort(key=lambda entry: (-entry["dominated_count"], str(entry["run_id"])))
+        if not include_dominated:
+            return front
+
+        rest = [entry for entry in results if entry["rank"] > 0]
+        rest.sort(key=lambda entry: (entry["rank"], -entry["dominated_count"], str(entry["run_id"])))
+        return front + rest
+
+
 class S3StorageBackend:
     """S3-compatible storage backend (stub)."""
 

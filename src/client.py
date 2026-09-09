@@ -474,6 +474,27 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def run_early_stopping_point(
+        self,
+        run_id: str,
+        metric: str,
+        maximize: bool = True,
+        patience: int = 5,
+        min_delta: float = 0.0,
+    ) -> dict:
+        """Report where a run's metric peaked and what training past it cost."""
+
+        return self._request(
+            "GET",
+            f"/runs/{run_id}/early-stopping",
+            params={
+                "metric": metric,
+                "maximize": maximize,
+                "patience": patience,
+                "min_delta": min_delta,
+            },
+        )
+
     def experiment_pareto_front(
         self,
         exp_id: str,

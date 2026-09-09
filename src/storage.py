@@ -1502,6 +1502,99 @@ class LocalStorageBackend:
         return events
 
 
+    def run_early_stopping_point(
+        self,
+        run_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+        patience: int = 5,
+        min_delta: float = 0.0,
+    ) -> dict:
+        """Find where a run's metric stopped improving, and what it cost.
+
+        A finished run records the whole curve, but nothing here said where
+        the curve peaked. Training past the best checkpoint burns compute and,
+        for a validation metric, is the signature of overfitting -- the best
+        model is at the peak, not at the last step.
+
+        Walks the metric in step order tracking the running best. An
+        observation counts as an improvement only when it beats the incumbent
+        by more than ``min_delta``, so noise around a plateau does not keep
+        resetting the clock. ``patience`` is how many non-improving
+        observations would have been tolerated before an early-stopping
+        callback fired.
+
+        Returns ``best_value``, ``best_step``, ``best_index``,
+        ``final_value``, ``final_step``, ``total_points``,
+        ``steps_after_best`` (observations recorded past the peak),
+        ``regression`` (how far the final value sits below the best, always
+        >= 0), ``would_have_stopped`` (whether patience was exceeded) and
+        ``stopped_at_step`` (where the callback would have fired, else None).
+
+        Raises ``KeyError`` when the run does not exist and ``ValueError``
+        for a non-positive ``patience``, a negative ``min_delta``, or a
+        metric with no recorded values.
+        """
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        if patience < 1:
+            raise ValueError("patience must be a positive integer")
+        if min_delta < 0:
+            raise ValueError("min_delta must be non-negative")
+
+        series = [
+            metric
+            for metric in run.get("metrics", [])
+            if metric.get("name") == metric_name and metric.get("value") is not None
+        ]
+        if not series:
+            raise ValueError(f"no recorded values for metric: {metric_name}")
+        # Steps may arrive out of order; the curve is defined by step, not by
+        # insertion order.
+        series.sort(key=lambda metric: (metric.get("step") is None, metric.get("step")))
+
+        best_value = float(series[0].get("value"))
+        best_index = 0
+        since_improvement = 0
+        stopped_at_step = None
+        for index, metric in enumerate(series[1:], start=1):
+            value = float(metric.get("value"))
+            improved = (
+                value > best_value + min_delta
+                if maximize
+                else value < best_value - min_delta
+            )
+            if improved:
+                best_value = value
+                best_index = index
+                since_improvement = 0
+                continue
+            since_improvement += 1
+            if since_improvement >= patience and stopped_at_step is None:
+                stopped_at_step = series[index].get("step")
+
+        final_value = float(series[-1].get("value"))
+        # Always a non-negative shortfall, whichever direction is better.
+        regression = (best_value - final_value) if maximize else (final_value - best_value)
+        return {
+            "metric_name": metric_name,
+            "maximize": maximize,
+            "patience": patience,
+            "min_delta": min_delta,
+            "best_value": best_value,
+            "best_step": series[best_index].get("step"),
+            "best_index": best_index,
+            "final_value": final_value,
+            "final_step": series[-1].get("step"),
+            "total_points": len(series),
+            "steps_after_best": len(series) - 1 - best_index,
+            "regression": max(regression, 0.0),
+            "would_have_stopped": stopped_at_step is not None,
+            "stopped_at_step": stopped_at_step,
+        }
+
     def experiment_pareto_front(
         self,
         exp_id: str,

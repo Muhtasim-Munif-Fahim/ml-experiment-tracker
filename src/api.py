@@ -984,6 +984,25 @@ def run_leaderboard(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/runs/{run_id}/early-stopping", response_model=dict)
+def run_early_stopping_point(
+    run_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+    patience: int = Query(5, ge=1),
+    min_delta: float = Query(0.0, ge=0.0),
+):
+    """Report where a run's metric peaked and what training past it cost."""
+    try:
+        return storage.run_early_stopping_point(
+            run_id, metric, maximize=maximize, patience=patience, min_delta=min_delta
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/experiments/{exp_id}/pareto", response_model=List[dict])
 def experiment_pareto_front(
     exp_id: str,

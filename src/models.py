@@ -176,6 +176,25 @@ def smooth_metric_series(
     return result
 
 
+def metric_variability(series: List[dict]) -> Optional[dict]:
+    """Summarize metric volatility without altering the recorded series.
+
+    Returns sample standard deviation, coefficient of variation, and the mean
+    absolute change between consecutive observations.  It is intended to flag
+    unstable training curves before selecting a best checkpoint.
+    """
+    if not series:
+        return None
+    values = [float(sample["value"]) for sample in series]
+    if len(values) == 1:
+        return {"count": 1, "mean": values[0], "stddev": 0.0, "coefficient_of_variation": 0.0, "mean_absolute_change": 0.0}
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    stddev = variance ** 0.5
+    changes = [abs(right - left) for left, right in zip(values, values[1:])]
+    return {"count": len(values), "mean": mean, "stddev": stddev, "coefficient_of_variation": stddev / abs(mean) if mean else None, "mean_absolute_change": sum(changes) / len(changes)}
+
+
 def interpolate_metric_series(
     series: List[dict], max_gap: Optional[int] = None
 ) -> List[dict]:

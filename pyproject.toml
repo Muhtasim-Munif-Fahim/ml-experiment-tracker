@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.6",
     "plotly>=5.15.0",
     "streamlit>=1.25.0",
+    "click>=8.1.0",
 ]
 
 [project.optional-dependencies]

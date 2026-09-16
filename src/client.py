@@ -229,6 +229,37 @@ class ExperimentTrackerClient:
             "candidate_run_id": candidate_run_id
         })
 
+    def compare_run_records(self, run_ids: List[str]) -> dict:
+        """Compare two or more runs: side-by-side metrics and parameter diffs."""
+        return self._request("POST", "/runs/compare", json={"run_ids": run_ids})
+
+    def export_run_comparison(
+        self,
+        run_ids: List[str],
+        destination: Optional[str] = None,
+        fmt: str = "markdown",
+    ) -> str:
+        """Fetch a Markdown or HTML comparison report for the given runs."""
+        normalized = fmt.lower()
+        if normalized in ("markdown", "md"):
+            suffix = "md"
+        elif normalized in ("html", "htm"):
+            suffix = "html"
+        else:
+            raise ValueError(f"unsupported comparison format: {fmt!r}")
+        response = self._request_raw(
+            "GET",
+            f"/runs/compare.{suffix}",
+            params={"run_ids": ",".join(run_ids)},
+        )
+        response.raise_for_status()
+        text = response.text
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return text
+
     def parameter_correlation(self, exp_id: str, metric_name: str) -> List[dict]:
         """Rank parameters by Pearson correlation with a target metric."""
         return self._request(

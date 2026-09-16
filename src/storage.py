@@ -12,7 +12,7 @@ import zipfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, List, Optional
+from typing import Any, BinaryIO, Iterable, List, Optional, Sequence
 
 from .models import (
     AlertRule,
@@ -20,9 +20,11 @@ from .models import (
     ArtifactType,
     Experiment,
     Run,
+    compare_run_records,
     metric_trend,
     pearson_correlation,
     standardize_series,
+    write_run_comparison_report,
 )
 
 EXPERIMENT_BUNDLE_VERSION = 1
@@ -1390,6 +1392,43 @@ class LocalStorageBackend:
                 })
         return str(target)
 
+    def compare_runs(self, run_ids: Sequence[str]) -> dict:
+        """Load stored runs and compare metrics and parameters side-by-side.
+
+        Run records are read from local storage by id, so this never talks
+        to S3. Raises ``ValueError`` when fewer than two unique ids are
+        given and ``KeyError`` when any id is missing.
+        """
+        if isinstance(run_ids, (str, bytes)) or not isinstance(run_ids, Sequence):
+            raise ValueError("at least two run ids are required")
+        cleaned = [str(run_id).strip() for run_id in run_ids]
+        if len(cleaned) < 2:
+            raise ValueError("at least two run ids are required")
+        if any(not run_id for run_id in cleaned):
+            raise ValueError("run ids must be non-empty strings")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("run ids must be unique")
+        missing = []
+        runs = []
+        for run_id in cleaned:
+            data = self.load_run(run_id)
+            if data is None:
+                missing.append(run_id)
+            else:
+                runs.append(data)
+        if missing:
+            raise KeyError(f"run not found: {', '.join(missing)}")
+        return compare_run_records(runs)
+
+    def export_run_comparison(
+        self,
+        run_ids: Sequence[str],
+        destination: str,
+        fmt: str = "markdown",
+    ) -> str:
+        """Write a Markdown or HTML comparison of the given runs to disk."""
+        comparison = self.compare_runs(run_ids)
+        return write_run_comparison_report(comparison, destination, fmt=fmt)
 
     def search_runs_sorted(
         self,

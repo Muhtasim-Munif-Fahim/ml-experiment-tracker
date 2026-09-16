@@ -31,6 +31,7 @@ from .models import (
     smooth_metric_series,
     metric_trend,
     parse_run_status,
+    render_run_comparison,
     validate_status_transition,
 )
 from .storage import StorageFactory, LocalStorageBackend
@@ -62,6 +63,10 @@ class RunUpdate(BaseModel):
 class RunCompareRequest(BaseModel):
     baseline_run_id: str
     candidate_run_id: str
+
+
+class MultiRunCompareRequest(BaseModel):
+    run_ids: List[str] = Field(min_length=2)
 
 
 class RunDuplicateRequest(BaseModel):
@@ -654,6 +659,70 @@ def search_runs_csv(
         content=render_csv(columns, rows),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="run-search.csv"'},
+    )
+
+
+def _comparison_run_ids(run_ids: str) -> List[str]:
+    parts = [item.strip() for item in run_ids.split(",") if item.strip()]
+    if len(parts) < 2:
+        raise HTTPException(
+            status_code=400, detail="at least two run_ids are required"
+        )
+    return parts
+
+
+@app.post("/runs/compare", response_model=dict)
+def compare_selected_runs(request: MultiRunCompareRequest):
+    """Compare two or more runs: side-by-side metrics and parameter diffs."""
+    try:
+        return storage.compare_runs(request.run_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/runs/compare.md")
+def export_run_comparison_markdown(run_ids: str = Query(...)):
+    """Download a Markdown comparison report for the given run ids."""
+    ids = _comparison_run_ids(run_ids)
+    try:
+        comparison = storage.compare_runs(ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    text = render_run_comparison(comparison, "markdown")
+    if not text.endswith("\n"):
+        text += "\n"
+    return Response(
+        content=text,
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="run-comparison.md"'
+        },
+    )
+
+
+@app.get("/runs/compare.html")
+def export_run_comparison_html(run_ids: str = Query(...)):
+    """Download a standalone HTML comparison report for the given run ids."""
+    ids = _comparison_run_ids(run_ids)
+    try:
+        comparison = storage.compare_runs(ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    text = render_run_comparison(comparison, "html")
+    if not text.endswith("\n"):
+        text += "\n"
+    return Response(
+        content=text,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="run-comparison.html"'
+        },
     )
 
 

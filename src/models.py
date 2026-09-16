@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from html import escape as html_escape
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
 from dataclasses import dataclass, field
 
 
@@ -900,6 +903,15 @@ class Experiment:
             "parameter_changes": param_changes,
         }
 
+    def compare_many(self, run_ids: Sequence[str]) -> Dict[str, Any]:
+        """Compare two or more runs: side-by-side metrics and parameter diffs."""
+
+        by_id = {run.id: run for run in self.runs}
+        missing = [run_id for run_id in run_ids if run_id not in by_id]
+        if missing:
+            raise KeyError(f"run not found in experiment: {', '.join(missing)}")
+        return compare_run_records([by_id[run_id] for run_id in run_ids])
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -925,3 +937,395 @@ class Experiment:
         exp.updated_at = datetime.fromisoformat(data["updated_at"])
         exp.runs = [Run.from_dict(r) for r in data.get("runs", [])]
         return exp
+
+
+def _run_view(run: Any) -> Dict[str, Any]:
+    """Normalize a ``Run`` or stored run mapping for comparison."""
+    if isinstance(run, Run):
+        created_at = run.created_at.isoformat() if run.created_at else None
+        finished_at = run.finished_at.isoformat() if run.finished_at else None
+        status = (
+            run.status.value if isinstance(run.status, RunStatus) else str(run.status)
+        )
+        return {
+            "id": run.id,
+            "name": run.name,
+            "status": status,
+            "experiment_id": run.experiment_id,
+            "created_at": created_at,
+            "finished_at": finished_at,
+            "params": dict(run.params),
+            "metrics": run.metrics,
+        }
+    if not isinstance(run, dict):
+        raise TypeError("runs must be Run objects or mappings")
+    return {
+        "id": run.get("id"),
+        "name": run.get("name"),
+        "status": run.get("status"),
+        "experiment_id": run.get("experiment_id"),
+        "created_at": run.get("created_at"),
+        "finished_at": run.get("finished_at"),
+        "params": dict(run.get("params") or {}),
+        "metrics": run.get("metrics") or [],
+    }
+
+
+def _latest_metric_values(metrics: Sequence[Any]) -> Dict[str, float]:
+    values: Dict[str, float] = {}
+    for metric in metrics:
+        if isinstance(metric, Metric):
+            values[metric.name] = metric.value
+        elif isinstance(metric, dict) and metric.get("name") is not None:
+            raw = metric.get("value")
+            if raw is None:
+                continue
+            values[str(metric["name"])] = float(raw)
+    return values
+
+
+def compare_run_records(runs: Sequence[Any]) -> Dict[str, Any]:
+    """Compare two or more runs: side-by-side latest metrics and param diffs.
+
+    Accepts ``Run`` objects or stored run mappings (fake records included).
+    The first run is the baseline for per-metric deltas. Parameter values that
+    are identical on every run are listed under ``shared_params``; everything
+    else appears under ``param_diffs``. Missing metric or parameter values are
+    recorded as ``None``.
+    """
+    if isinstance(runs, (str, bytes)) or not isinstance(runs, Sequence):
+        raise ValueError("at least two runs are required to compare")
+    if len(runs) < 2:
+        raise ValueError("at least two runs are required to compare")
+
+    views = [_run_view(run) for run in runs]
+    run_ids = [view.get("id") for view in views]
+    if any(not run_id for run_id in run_ids):
+        raise ValueError("every run must have an id")
+    if len(set(run_ids)) != len(run_ids):
+        raise ValueError("run ids must be unique")
+
+    latest = [_latest_metric_values(view.get("metrics") or []) for view in views]
+    metric_names = sorted({name for values in latest for name in values})
+    metrics: List[Dict[str, Any]] = []
+    baseline_id = run_ids[0]
+    for name in metric_names:
+        values_by_run = {
+            run_ids[index]: latest[index].get(name) for index in range(len(views))
+        }
+        baseline_value = values_by_run[baseline_id]
+        deltas = {}
+        for run_id in run_ids:
+            value = values_by_run[run_id]
+            if run_id == baseline_id:
+                deltas[run_id] = None
+            elif value is None or baseline_value is None:
+                deltas[run_id] = None
+            else:
+                deltas[run_id] = value - baseline_value
+        metrics.append({"name": name, "values": values_by_run, "deltas": deltas})
+
+    all_param_names = sorted(
+        {name for view in views for name in (view.get("params") or {})}
+    )
+    shared_params: Dict[str, Any] = {}
+    param_diffs: List[Dict[str, Any]] = []
+    first_params = views[0].get("params") or {}
+    for name in all_param_names:
+        values_by_run = {
+            run_ids[index]: (views[index].get("params") or {}).get(name)
+            for index in range(len(views))
+        }
+        first_has = name in first_params
+        first_value = first_params.get(name)
+        all_equal = first_has and all(
+            name in (view.get("params") or {})
+            and (view.get("params") or {}).get(name) == first_value
+            for view in views
+        )
+        if all_equal:
+            shared_params[name] = first_value
+        else:
+            param_diffs.append({"name": name, "values": values_by_run})
+
+    return {
+        "run_ids": list(run_ids),
+        "baseline_run_id": baseline_id,
+        "runs": [
+            {
+                "id": view.get("id"),
+                "name": view.get("name"),
+                "status": view.get("status"),
+                "experiment_id": view.get("experiment_id"),
+                "created_at": view.get("created_at"),
+                "finished_at": view.get("finished_at"),
+            }
+            for view in views
+        ],
+        "metrics": metrics,
+        "shared_params": shared_params,
+        "param_diffs": param_diffs,
+    }
+
+
+def _report_cell(value: Any) -> str:
+    """Plain-text cell for a comparison table."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return f"{value:g}"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, ensure_ascii=False)
+    return str(value)
+
+
+def _run_column_labels(runs: Sequence[Dict[str, Any]]) -> List[str]:
+    names = [str(run.get("name") or run.get("id") or "") for run in runs]
+    if len(set(names)) == len(names):
+        return names
+    return [
+        f"{name} ({str(run.get('id', ''))[:8]})" for name, run in zip(names, runs)
+    ]
+
+
+def _md_escape(text: str) -> str:
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", "")
+
+
+def _markdown_table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
+    header_line = "| " + " | ".join(_md_escape(str(h)) for h in headers) + " |"
+    separator = "| " + " | ".join("---" for _ in headers) + " |"
+    body = [
+        "| " + " | ".join(_md_escape(_report_cell(cell)) for cell in row) + " |"
+        for row in rows
+    ]
+    return "\n".join([header_line, separator, *body])
+
+
+def render_run_comparison_markdown(comparison: Dict[str, Any]) -> str:
+    """Render a shareable Markdown report from :func:`compare_run_records`."""
+    runs = list(comparison.get("runs") or [])
+    labels = _run_column_labels(runs)
+    lines = [
+        "# Run comparison",
+        "",
+        f"Compared **{len(runs)}** runs. Baseline: "
+        f"`{comparison.get('baseline_run_id', '')}`.",
+        "",
+        "## Runs",
+        "",
+        _markdown_table(
+            ["Name", "Run ID", "Status", "Experiment", "Created"],
+            [
+                [
+                    run.get("name"),
+                    run.get("id"),
+                    run.get("status"),
+                    run.get("experiment_id"),
+                    run.get("created_at"),
+                ]
+                for run in runs
+            ],
+        ),
+        "",
+        "## Metrics",
+        "",
+    ]
+
+    metrics = list(comparison.get("metrics") or [])
+    if not metrics:
+        lines.append("_No metrics recorded on these runs._")
+    else:
+        lines.append("Latest recorded value of each metric, side-by-side.")
+        lines.append("")
+        metric_rows = []
+        for entry in metrics:
+            row = [entry.get("name")]
+            values = entry.get("values") or {}
+            deltas = entry.get("deltas") or {}
+            for run in runs:
+                row.append(values.get(run.get("id")))
+            for run in runs[1:]:
+                row.append(deltas.get(run.get("id")))
+            metric_rows.append(row)
+        delta_headers = [f"Δ {label}" for label in labels[1:]]
+        lines.append(
+            _markdown_table(["Metric", *labels, *delta_headers], metric_rows)
+        )
+
+    lines.extend(["", "## Parameters", ""])
+    shared = dict(comparison.get("shared_params") or {})
+    diffs = list(comparison.get("param_diffs") or [])
+    if not shared and not diffs:
+        lines.append("_No parameters recorded on these runs._")
+    else:
+        if shared:
+            lines.append("Shared across every compared run:")
+            lines.append("")
+            lines.append(
+                _markdown_table(
+                    ["Parameter", "Value"],
+                    [[name, shared[name]] for name in sorted(shared)],
+                )
+            )
+            lines.append("")
+        if diffs:
+            lines.append("Parameter diffs:")
+            lines.append("")
+            diff_rows = [
+                [entry.get("name"), *[
+                    (entry.get("values") or {}).get(run.get("id")) for run in runs
+                ]]
+                for entry in diffs
+            ]
+            lines.append(_markdown_table(["Parameter", *labels], diff_rows))
+        else:
+            lines.append("All compared runs share the same parameter values.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _html_table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
+    head = "".join(f"<th>{html_escape(str(header))}</th>" for header in headers)
+    body_rows = []
+    for row in rows:
+        cells = []
+        for cell in row:
+            text = _report_cell(cell)
+            css = ' class="missing"' if text == "—" else ""
+            cells.append(f"<td{css}>{html_escape(text)}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        "<table>\n<thead><tr>"
+        + head
+        + "</tr></thead>\n<tbody>\n"
+        + "\n".join(body_rows)
+        + "\n</tbody>\n</table>"
+    )
+
+
+def render_run_comparison_html(comparison: Dict[str, Any]) -> str:
+    """Render a standalone HTML report from :func:`compare_run_records`."""
+    runs = list(comparison.get("runs") or [])
+    labels = _run_column_labels(runs)
+    baseline = html_escape(str(comparison.get("baseline_run_id") or ""))
+    run_table = _html_table(
+        ["Name", "Run ID", "Status", "Experiment", "Created"],
+        [
+            [
+                run.get("name"),
+                run.get("id"),
+                run.get("status"),
+                run.get("experiment_id"),
+                run.get("created_at"),
+            ]
+            for run in runs
+        ],
+    )
+
+    metrics = list(comparison.get("metrics") or [])
+    if not metrics:
+        metrics_block = "<p><em>No metrics recorded on these runs.</em></p>"
+    else:
+        metric_rows = []
+        for entry in metrics:
+            row = [entry.get("name")]
+            values = entry.get("values") or {}
+            deltas = entry.get("deltas") or {}
+            for run in runs:
+                row.append(values.get(run.get("id")))
+            for run in runs[1:]:
+                row.append(deltas.get(run.get("id")))
+            metric_rows.append(row)
+        delta_headers = [f"Δ {label}" for label in labels[1:]]
+        metrics_block = (
+            "<p>Latest recorded value of each metric, side-by-side.</p>\n"
+            + _html_table(["Metric", *labels, *delta_headers], metric_rows)
+        )
+
+    shared = dict(comparison.get("shared_params") or {})
+    diffs = list(comparison.get("param_diffs") or [])
+    param_parts: List[str] = []
+    if not shared and not diffs:
+        param_parts.append("<p><em>No parameters recorded on these runs.</em></p>")
+    else:
+        if shared:
+            param_parts.append("<p>Shared across every compared run:</p>")
+            param_parts.append(
+                _html_table(
+                    ["Parameter", "Value"],
+                    [[name, shared[name]] for name in sorted(shared)],
+                )
+            )
+        if diffs:
+            param_parts.append("<p>Parameter diffs:</p>")
+            diff_rows = [
+                [
+                    entry.get("name"),
+                    *[
+                        (entry.get("values") or {}).get(run.get("id"))
+                        for run in runs
+                    ],
+                ]
+                for entry in diffs
+            ]
+            param_parts.append(_html_table(["Parameter", *labels], diff_rows))
+        else:
+            param_parts.append(
+                "<p>All compared runs share the same parameter values.</p>"
+            )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Run comparison</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }}
+  table {{ border-collapse: collapse; margin: 1rem 0; }}
+  th, td {{ border: 1px solid #ccc; padding: 0.4rem 0.75rem; text-align: left; }}
+  th {{ background: #f4f4f4; }}
+  td.missing {{ color: #888; }}
+  code {{ font-size: 0.9em; }}
+</style>
+</head>
+<body>
+<h1>Run comparison</h1>
+<p>Compared <strong>{len(runs)}</strong> runs. Baseline: <code>{baseline}</code>.</p>
+<h2>Runs</h2>
+{run_table}
+<h2>Metrics</h2>
+{metrics_block}
+<h2>Parameters</h2>
+{chr(10).join(param_parts)}
+</body>
+</html>
+"""
+
+
+def render_run_comparison(comparison: Dict[str, Any], fmt: str = "markdown") -> str:
+    """Render a comparison as ``markdown`` or ``html``."""
+    normalized = str(fmt).strip().lower()
+    if normalized in ("markdown", "md"):
+        return render_run_comparison_markdown(comparison)
+    if normalized in ("html", "htm"):
+        return render_run_comparison_html(comparison)
+    raise ValueError(f"unsupported comparison format: {fmt!r}")
+
+
+def write_run_comparison_report(
+    comparison: Dict[str, Any],
+    destination: str,
+    fmt: str = "markdown",
+) -> str:
+    """Write a Markdown or HTML comparison report to ``destination``."""
+    text = render_run_comparison(comparison, fmt)
+    if not text.endswith("\n"):
+        text += "\n"
+    target = Path(destination)
+    if target.parent:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    return str(target)

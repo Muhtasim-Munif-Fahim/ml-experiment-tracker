@@ -11,6 +11,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Web UI for experiment comparison
 - REST API for integration
 - Shareable Markdown/HTML run-comparison reports
+- Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
 
 ## Quick Start
 
@@ -88,6 +89,54 @@ client.export_run_comparison([run_a_id, run_b_id], destination="reports/compare.
 ```
 
 The pairwise experiment helper `POST /experiments/{id}/runs/compare` is unchanged.
+
+## Metric history export
+
+Runs already accept string key/value tags (`tags` on create, `GET`/`PUT`/`DELETE /runs/{id}/tags`, and `query_runs(..., tags={...})`). Comparison reports stay Markdown and HTML and are not filtered by a second tag system. This export is the per-step metric history that sits next to the wide pivot table.
+
+Two views of the same logged metrics:
+
+| View | Endpoint | Shape |
+| --- | --- | --- |
+| Pivot | `GET /experiments/{id}/pivot.csv` | One row per run. Columns are `run_id`, `run_name`, then the **latest** value of each metric. |
+| History | `GET /experiments/{id}/metrics.history.csv` and `GET /experiments/{id}/metrics.history.json` | One row per logged step: `run_id`, `run_name`, `metric_name`, `step`, `value`, `timestamp`. |
+
+History accepts `metric_names` (comma-separated), `start_step`, and `end_step`. An unknown experiment is 404. A range with `start_step` greater than `end_step` is 400. Rows are ordered by run name, metric name, then step.
+
+The JSON body is:
+
+```json
+{
+  "experiment_id": "exp-id",
+  "columns": ["run_id", "run_name", "metric_name", "step", "value", "timestamp"],
+  "rows": [
+    {
+      "run_id": "run-id",
+      "run_name": "train-a",
+      "metric_name": "accuracy",
+      "step": 2,
+      "value": 0.9,
+      "timestamp": "2026-09-22T00:00:00+00:00"
+    }
+  ]
+}
+```
+
+`columns` matches the CSV header, so the two files describe the same table.
+
+```python
+from src.client import ExperimentTrackerClient
+
+client = ExperimentTrackerClient("http://localhost:8000")
+client.experiment_metric_history_csv(
+    exp_id, metric_names=["accuracy"], destination="reports/history.csv"
+)
+payload = client.experiment_metric_history_json(
+    exp_id, start_step=1, end_step=10, destination="reports/history.json"
+)
+```
+
+A single run's points are also available as `GET /runs/{id}/metrics.csv` (columns `name`, `step`, `value`, `timestamp`).
 
 ## Project Structure
 

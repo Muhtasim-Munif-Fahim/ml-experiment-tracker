@@ -274,6 +274,37 @@ def experiment_metric_pivot(exp_id: str, metric_names: Optional[str] = None):
     )
 
 
+METRIC_HISTORY_COLUMNS = [
+    "run_id",
+    "run_name",
+    "metric_name",
+    "step",
+    "value",
+    "timestamp",
+]
+
+
+def _load_metric_history(
+    exp_id: str,
+    metric_names: Optional[str],
+    start_step: Optional[int],
+    end_step: Optional[int],
+) -> List[dict]:
+    """Load long-form per-step metric rows, mapping storage errors to HTTP."""
+    try:
+        requested = metric_names.split(",") if metric_names else None
+        return storage.experiment_metric_long(
+            exp_id,
+            metric_names=requested,
+            start_step=start_step,
+            end_step=end_step,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/metrics.history.csv")
 def experiment_metric_history(
     exp_id: str,
@@ -290,29 +321,48 @@ def experiment_metric_history(
     step range. The CSV stays RFC-4180 compatible (CRLF line endings, every
     field quoted) so it round-trips through pandas without surprises.
     """
-    try:
-        requested = metric_names.split(",") if metric_names else None
-        rows = storage.experiment_metric_long(
-            exp_id,
-            metric_names=requested,
-            start_step=start_step,
-            end_step=end_step,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Experiment not found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    columns = ["run_id", "run_name", "metric_name", "step", "value", "timestamp"]
+    rows = _load_metric_history(exp_id, metric_names, start_step, end_step)
     row_lists = [
-        [row.get(col) for col in columns]
+        [row.get(col) for col in METRIC_HISTORY_COLUMNS]
         for row in rows
     ]
     return Response(
-        content=render_csv(columns, row_lists),
+        content=render_csv(METRIC_HISTORY_COLUMNS, row_lists),
         media_type="text/csv",
         headers={
             "Content-Disposition": (
                 f"attachment; filename=experiment-{exp_id}-metrics-history.csv"
+            )
+        },
+    )
+
+
+@app.get("/experiments/{exp_id}/metrics.history.json")
+def experiment_metric_history_json(
+    exp_id: str,
+    metric_names: Optional[str] = None,
+    start_step: Optional[int] = None,
+    end_step: Optional[int] = None,
+):
+    """Return the same per-step metric history as the CSV export, as JSON.
+
+    The body lists ``columns`` in CSV header order and one object per logged
+    observation under ``rows``. Filters match ``metrics.history.csv``.
+    """
+    rows = _load_metric_history(exp_id, metric_names, start_step, end_step)
+    payload = {
+        "experiment_id": exp_id,
+        "columns": list(METRIC_HISTORY_COLUMNS),
+        "rows": [
+            {column: row.get(column) for column in METRIC_HISTORY_COLUMNS}
+            for row in rows
+        ],
+    }
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="experiment-{exp_id}-metrics-history.json"'
             )
         },
     )

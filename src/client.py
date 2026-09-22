@@ -668,6 +668,38 @@ class ExperimentTrackerClient:
             path.write_text(text, encoding="utf-8")
         return text
 
+    def experiment_metric_history_json(
+        self,
+        exp_id: str,
+        metric_names: Optional[List[str]] = None,
+        start_step: Optional[int] = None,
+        end_step: Optional[int] = None,
+        destination: Optional[str] = None,
+    ) -> dict:
+        """Fetch the long-form per-step metric history for an experiment as JSON.
+
+        The payload has ``experiment_id``, ``columns`` (same order as the CSV
+        header) and ``rows`` (one object per logged observation). Filters match
+        :meth:`experiment_metric_history_csv`. Returns the parsed document and
+        optionally writes the response body to ``destination``.
+        """
+        params: dict = {}
+        if metric_names:
+            params["metric_names"] = ",".join(metric_names)
+        if start_step is not None:
+            params["start_step"] = str(start_step)
+        if end_step is not None:
+            params["end_step"] = str(end_step)
+        response = self._request_raw(
+            "GET", f"/experiments/{exp_id}/metrics.history.json", params=params
+        )
+        response.raise_for_status()
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(response.text, encoding="utf-8")
+        return response.json()
+
     def experiment_snapshot_csv(
         self,
         exp_id: str,

@@ -1,3 +1,7 @@
+# Nested params
+
+`flatten_params` / `Run.log_params` expand nested dicts into dotted keys (e.g. `model.lr`).
+
 # ML Experiment Tracker
 
 A lightweight experiment tracking and model registry system for ML workflows.

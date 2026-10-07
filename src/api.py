@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .models import (
+    flatten_params,
     AlertRule,
     Experiment,
     Run,
@@ -563,7 +564,8 @@ def create_run(exp_id: str, run: RunCreate):
     exp = storage.load_experiment(exp_id)
     if not exp:
         raise HTTPException(status_code=404, detail="Experiment not found")
-    run = Run(experiment_id=exp_id, name=run.name, params=run.params, tags=run.tags)
+    flat_params = flatten_params(run.params) if run.params else {}
+    run = Run(experiment_id=exp_id, name=run.name, params=flat_params, tags=run.tags)
     storage.save_run(run.to_dict())
     return run.to_dict()
 
@@ -904,7 +906,11 @@ def log_param(run_id: str, param: ParamCreate):
     run_data = storage.load_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail="Run not found")
-    run_data.setdefault("params", {})[param.name] = param.value
+    params = run_data.setdefault("params", {})
+    if isinstance(param.value, (dict, list, tuple)):
+        params.update(flatten_params({param.name: param.value}))
+    else:
+        params[param.name] = param.value
     storage.save_run(run_data)
     return {"message": "Parameter logged"}
 

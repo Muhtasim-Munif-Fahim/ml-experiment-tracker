@@ -10,8 +10,68 @@ from datetime import datetime, timezone
 from enum import Enum
 from html import escape as html_escape
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 from dataclasses import dataclass, field
+
+
+
+def flatten_params(
+    params: Any,
+    *,
+    separator: str = ".",
+    prefix: str = "",
+    max_depth: int = 32,
+) -> Dict[str, Any]:
+    """Flatten nested dict / list hyperparameters into dotted keys.
+
+    Nested mappings become ``parent.child`` keys. Sequences (except strings /
+    bytes) become ``parent.0``, ``parent.1``, .... Scalars are kept as-is.
+    Empty mappings collapse to an empty dict under the current prefix only
+    when a prefix is set (so ``{"a": {}}`` yields ``{"a": {}}``). Cycles or
+    depths beyond ``max_depth`` raise ``ValueError``.
+    """
+    if not isinstance(separator, str) or not separator:
+        raise ValueError("separator must be a non-empty string")
+    if max_depth < 1:
+        raise ValueError("max_depth must be a positive integer")
+
+    def _walk(value: Any, path: str, depth: int, seen: set) -> Dict[str, Any]:
+        if depth > max_depth:
+            raise ValueError("params nesting exceeds max_depth")
+        if isinstance(value, Mapping):
+            obj_id = id(value)
+            if obj_id in seen:
+                raise ValueError("params contain a cyclic reference")
+            if not value:
+                return {path: {}} if path else {}
+            seen = set(seen)
+            seen.add(obj_id)
+            out: Dict[str, Any] = {}
+            for key, child in value.items():
+                key_s = str(key)
+                child_path = f"{path}{separator}{key_s}" if path else key_s
+                out.update(_walk(child, child_path, depth + 1, seen))
+            return out
+        if isinstance(value, (list, tuple)):
+            obj_id = id(value)
+            if obj_id in seen:
+                raise ValueError("params contain a cyclic reference")
+            if not value:
+                return {path: []} if path else {}
+            seen = set(seen)
+            seen.add(obj_id)
+            out = {}
+            for index, child in enumerate(value):
+                child_path = f"{path}{separator}{index}" if path else str(index)
+                out.update(_walk(child, child_path, depth + 1, seen))
+            return out
+        if not path:
+            raise ValueError("top-level params must be a mapping")
+        return {path: value}
+
+    if not isinstance(params, Mapping):
+        raise ValueError("params must be a mapping")
+    return _walk(params, prefix, 1, set())
 
 
 class RunStatus(str, Enum):
@@ -530,8 +590,36 @@ class Run:
     error: Optional[str] = None
     status_history: List[Dict[str, Any]] = field(default_factory=list)
 
-    def log_param(self, name: str, value: Any) -> None:
-        self.params[name] = value
+    def log_param(self, name: str, value: Any, *, flatten: bool = True) -> None:
+        """Record a hyperparameter, optionally flattening nested mappings.
+
+        When ``flatten`` is true (default) and ``value`` is a mapping or a
+        non-string sequence, the value is expanded with
+        :func:`flatten_params` under the ``name`` prefix (for example
+        ``model`` + ``{"lr": 0.1}`` stores ``model.lr``). Scalars are stored
+        under ``name`` unchanged.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("param name must be a non-empty string")
+        if flatten and (isinstance(value, Mapping) or isinstance(value, (list, tuple))):
+            flat = flatten_params({name: value})
+            self.params.update(flat)
+        else:
+            self.params[name] = value
+
+    def log_params(self, params: Dict[str, Any], *, flatten: bool = True) -> None:
+        """Record many hyperparameters at once.
+
+        When ``flatten`` is true, nested dicts and lists are expanded into
+        dotted keys via :func:`flatten_params` before merging into
+        ``self.params``.
+        """
+        if not isinstance(params, Mapping) or not params:
+            raise ValueError("params must be a non-empty mapping")
+        if flatten:
+            self.params.update(flatten_params(params))
+        else:
+            self.params.update(dict(params))
 
     def clone(self, name: Optional[str] = None) -> "Run":
         """Create a new running child run with copied configuration metadata."""

@@ -381,6 +381,38 @@ def parameter_correlation(
         raise HTTPException(status_code=404, detail="Experiment not found") from exc
 
 
+@app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
+def experiment_run_groups(
+    exp_id: str,
+    metric: str = Query(...),
+    ignore: str = "seed",
+    group_by: Optional[str] = None,
+    maximize: bool = True,
+    confidence: float = 0.95,
+):
+    """Aggregate repeated runs per configuration (mean, std, CI, Welch vs best).
+
+    ``ignore`` and ``group_by`` are comma-separated parameter names.
+    """
+    ignore_keys = [name.strip() for name in ignore.split(",") if name.strip()]
+    group_keys = (
+        [name.strip() for name in group_by.split(",") if name.strip()] if group_by else None
+    )
+    try:
+        return storage.experiment_run_groups(
+            exp_id,
+            metric,
+            ignore=ignore_keys,
+            group_by=group_keys,
+            maximize=maximize,
+            confidence=confidence,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/metrics/{metric_name}/stats", response_model=dict)
 def experiment_metric_stats(exp_id: str, metric_name: str):
     """Experiment-wide descriptive statistics for one metric's observations."""

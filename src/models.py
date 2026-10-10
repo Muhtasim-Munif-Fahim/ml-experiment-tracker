@@ -513,6 +513,194 @@ def metric_trend(series: List[dict], *, alpha: float = 0.05) -> Optional[dict]:
     }
 
 
+def _t_two_sided_p(t_statistic: float, degrees_of_freedom: float) -> float:
+    """Two-sided Student-t p-value for a (possibly fractional) df."""
+
+    if not degrees_of_freedom > 0 or math.isnan(t_statistic):
+        return 1.0
+    if math.isinf(t_statistic):
+        return 0.0
+    x = degrees_of_freedom / (degrees_of_freedom + t_statistic * t_statistic)
+    return _betai(degrees_of_freedom / 2.0, 0.5, x)
+
+
+def student_t_critical(confidence: float, degrees_of_freedom: float) -> float:
+    """Two-sided critical value ``t`` with ``P(|T| > t) = 1 - confidence``.
+
+    Found by bisection on the incomplete-beta tail, so no scipy is needed.
+    """
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must lie in (0, 1)")
+    if not degrees_of_freedom > 0:
+        raise ValueError("degrees_of_freedom must be positive")
+    target = 1.0 - confidence
+    lo, hi = 0.0, 1.0
+    while _t_two_sided_p(hi, degrees_of_freedom) > target:
+        hi *= 2.0
+        if hi > 1e12:  # pragma: no cover - only for absurd inputs
+            break
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _t_two_sided_p(mid, degrees_of_freedom) > target:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-12 * max(1.0, hi):
+            break
+    return 0.5 * (lo + hi)
+
+
+def summarize_values(values: Sequence[float], *, confidence: float = 0.95) -> dict:
+    """Mean, sample std, standard error and a Student-t confidence interval.
+
+    With a single value the spread is undefined: ``std``, ``sem`` and the
+    interval bounds are ``None``.
+    """
+    data = [float(v) for v in values]
+    if not data:
+        raise ValueError("values must not be empty")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must lie in (0, 1)")
+    n = len(data)
+    mean = sum(data) / n
+    if n < 2:
+        return {"n": n, "mean": mean, "std": None, "sem": None, "ci_low": None, "ci_high": None}
+    variance = sum((v - mean) ** 2 for v in data) / (n - 1)
+    std = math.sqrt(variance)
+    sem = std / math.sqrt(n)
+    half = student_t_critical(confidence, n - 1) * sem
+    return {
+        "n": n,
+        "mean": mean,
+        "std": std,
+        "sem": sem,
+        "ci_low": mean - half,
+        "ci_high": mean + half,
+    }
+
+
+def welch_t_test(
+    a: Sequence[float],
+    b: Sequence[float],
+    *,
+    alpha: float = 0.05,
+) -> Optional[dict]:
+    """Welch's unequal-variance t-test of ``mean(a) - mean(b)``.
+
+    Returns the difference, t statistic, Welch–Satterthwaite degrees of
+    freedom, two-sided p-value, a ``1 - alpha`` confidence interval for the
+    difference and a ``significant`` flag. Returns ``None`` when either
+    sample has fewer than two values. Two zero-variance samples give
+    ``p_value`` 1.0 when the means match and 0.0 otherwise.
+    """
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must lie in (0, 1)")
+    xs = [float(v) for v in a]
+    ys = [float(v) for v in b]
+    if len(xs) < 2 or len(ys) < 2:
+        return None
+    sa = summarize_values(xs)
+    sb = summarize_values(ys)
+    diff = sa["mean"] - sb["mean"]
+    va = sa["std"] ** 2 / sa["n"]
+    vb = sb["std"] ** 2 / sb["n"]
+    se = math.sqrt(va + vb)
+    if se == 0.0:
+        p_value = 1.0 if diff == 0.0 else 0.0
+        return {
+            "mean_a": sa["mean"],
+            "mean_b": sb["mean"],
+            "difference": diff,
+            "t_statistic": 0.0 if diff == 0.0 else math.copysign(math.inf, diff),
+            "degrees_of_freedom": float(sa["n"] + sb["n"] - 2),
+            "p_value": p_value,
+            "ci_low": diff,
+            "ci_high": diff,
+            "significant": p_value < alpha,
+        }
+    t_stat = diff / se
+    df = (va + vb) ** 2 / (va**2 / (sa["n"] - 1) + vb**2 / (sb["n"] - 1))
+    p_value = _t_two_sided_p(t_stat, df)
+    half = student_t_critical(1.0 - alpha, df) * se
+    return {
+        "mean_a": sa["mean"],
+        "mean_b": sb["mean"],
+        "difference": diff,
+        "t_statistic": t_stat,
+        "degrees_of_freedom": df,
+        "p_value": p_value,
+        "ci_low": diff - half,
+        "ci_high": diff + half,
+        "significant": p_value < alpha,
+    }
+
+
+def _hashable_param(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def group_runs_by_params(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    ignore: Sequence[str] = ("seed",),
+    group_by: Optional[Sequence[str]] = None,
+    maximize: bool = True,
+    confidence: float = 0.95,
+) -> List[dict]:
+    """Aggregate repeated runs (e.g. several seeds) of the same configuration.
+
+    Runs are grouped by their (flattened) params, leaving out every key in
+    ``ignore`` (``seed`` by default), or by exactly the keys in ``group_by``
+    when it is given. Each run contributes its latest value of
+    ``metric_name``; runs that never logged it are skipped. Every group gets
+    ``n``, ``mean``, ``std``, ``sem`` and a Student-t ``confidence`` interval.
+    Groups are ordered best-first by mean (``maximize`` picks the
+    direction). Each group after the first also carries a Welch t-test
+    against the best group (``vs_best``), which shows whether the gap is
+    larger than the seed-to-seed noise.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    ignored = set(ignore or ())
+    keys = list(group_by) if group_by else None
+    buckets: Dict[str, dict] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        params = flatten_params(view.get("params") or {})
+        if keys is not None:
+            config = {k: params.get(k) for k in keys}
+        else:
+            config = {k: v for k, v in sorted(params.items()) if k not in ignored}
+        key = _hashable_param(config)
+        bucket = buckets.setdefault(key, {"params": config, "run_ids": [], "values": []})
+        bucket["run_ids"].append(view.get("id"))
+        bucket["values"].append(float(values[-1]))
+
+    groups: List[dict] = []
+    for bucket in buckets.values():
+        stats = summarize_values(bucket["values"], confidence=confidence)
+        groups.append({"params": bucket["params"], "run_ids": bucket["run_ids"],
+                       "values": bucket["values"], **stats})
+    groups.sort(key=lambda g: (-g["mean"] if maximize else g["mean"], _hashable_param(g["params"])))
+    for rank, group in enumerate(groups, start=1):
+        group["rank"] = rank
+        if rank == 1:
+            group["vs_best"] = None
+        else:
+            group["vs_best"] = welch_t_test(
+                groups[0]["values"], group["values"], alpha=1.0 - confidence
+            )
+    return groups
+
+
 @dataclass
 class Artifact:
     name: str

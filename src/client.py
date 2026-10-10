@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import requests
 
@@ -267,6 +267,26 @@ class ExperimentTrackerClient:
             f"/experiments/{exp_id}/parameter-correlation",
             params={"metric": metric_name},
         )
+
+    def run_groups(
+        self,
+        exp_id: str,
+        metric_name: str,
+        ignore: Sequence[str] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        confidence: float = 0.95,
+    ) -> List[dict]:
+        """Aggregate repeated runs per configuration (e.g. across seeds)."""
+        params = {
+            "metric": metric_name,
+            "ignore": ",".join(ignore or ()),
+            "maximize": maximize,
+            "confidence": confidence,
+        }
+        if group_by:
+            params["group_by"] = ",".join(group_by)
+        return self._request("GET", f"/experiments/{exp_id}/run-groups", params=params)
 
     def metric_baseline(self, exp_id: str, metric_name: str) -> dict:
         """Fetch experiment-wide descriptive statistics for one metric."""

@@ -21,6 +21,7 @@ from .models import (
     Experiment,
     Run,
     compare_run_records,
+    group_runs_by_params,
     metric_trend,
     pearson_correlation,
     standardize_series,
@@ -1125,6 +1126,35 @@ class LocalStorageBackend:
             )
         results.sort(key=lambda entry: abs(entry["correlation"]), reverse=True)
         return results
+
+    def experiment_run_groups(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        ignore: Optional[Sequence[str]] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        confidence: float = 0.95,
+    ) -> List[dict]:
+        """Aggregate repeated runs of each configuration (e.g. across seeds).
+
+        Wraps :func:`src.models.group_runs_by_params` over the experiment's
+        runs: each group reports ``n``, ``mean``, ``std`` and a Student-t
+        interval of the latest ``metric_name``, ordered best-first, plus a
+        Welch t-test against the best group. Raises ``KeyError`` when the
+        experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return group_runs_by_params(
+            self.list_runs(exp_id),
+            metric_name,
+            ignore=tuple(ignore or ()),
+            group_by=group_by,
+            maximize=maximize,
+            confidence=confidence,
+        )
 
     def experiment_metric_long(
         self,

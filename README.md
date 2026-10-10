@@ -16,6 +16,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - REST API for integration
 - Shareable Markdown/HTML run-comparison reports
 - Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
+- Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
 
 ## Quick Start
 
@@ -141,6 +142,34 @@ payload = client.experiment_metric_history_json(
 ```
 
 A single run's points are also available as `GET /runs/{id}/metrics.csv` (columns `name`, `step`, `value`, `timestamp`).
+
+## Aggregate runs across seeds
+
+One run per configuration can't tell a real improvement from seed noise.
+`group_runs_by_params` (and the `run-groups` endpoint) group runs by their
+flattened params, ignoring `seed` by default, or by an explicit `group_by`
+list. Each group reports `n`, `mean`, `std`, `sem` and a Student-t
+confidence interval of each run's latest metric value. Groups are ordered
+best-first (`maximize`), and every group after the first carries `vs_best`,
+a Welch unequal-variance t-test against the best group (difference, df,
+p-value, CI, `significant`). All of it is pure Python, with no scipy.
+
+```python
+from src.models import group_runs_by_params, welch_t_test
+
+groups = group_runs_by_params(runs, "accuracy", ignore=["seed"], confidence=0.95)
+for g in groups:
+    print(g["rank"], g["params"], g["n"], g["mean"], (g["ci_low"], g["ci_high"]),
+          g["vs_best"] and g["vs_best"]["p_value"])
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/run-groups?metric=accuracy&ignore=seed"
+curl "http://localhost:8000/experiments/$EXP/run-groups?metric=loss&group_by=optimizer&maximize=false"
+```
+
+`ExperimentTrackerClient.run_groups(exp_id, "accuracy", group_by=["optimizer"])`
+wraps the endpoint.
 
 ## Project Structure
 

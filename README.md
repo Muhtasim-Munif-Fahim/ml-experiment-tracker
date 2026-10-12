@@ -17,6 +17,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Shareable Markdown/HTML run-comparison reports
 - Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
+- ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start
 
@@ -170,6 +171,39 @@ curl "http://localhost:8000/experiments/$EXP/run-groups?metric=loss&group_by=opt
 
 `ExperimentTrackerClient.run_groups(exp_id, "accuracy", group_by=["optimizer"])`
 wraps the endpoint.
+
+## Hyperparameter importance
+
+Pearson correlation (`parameter-correlation`) only covers numeric params with
+a linear effect. `parameter_importance` (and the `parameter-importance`
+endpoint) instead runs a one-way ANOVA of each run's latest metric value,
+grouped by each flattened param:
+
+- `eta_squared`: the share of metric variance explained by the param.
+- `omega_squared`: eta² with its small-sample bias corrected, clipped at 0.
+  Rows are ranked by this value.
+- `f_statistic` and `p_value`: the F-test, computed in pure Python with the
+  existing incomplete-beta helper.
+- `level_means`: the mean metric value for each param value.
+- `spearman`: the rank correlation, for numeric params only.
+
+This also handles categorical params (optimizer, activation) and
+non-monotone effects, such as a learning rate whose best value is in the
+middle. Numeric params with more than `max_levels` distinct values are put
+into equal-count bins first. `seed` is ignored by default.
+
+```python
+from src.models import parameter_importance
+
+for row in parameter_importance(runs, "accuracy", ignore=["seed"], max_levels=10):
+    print(row["param_name"], row["kind"], round(row["omega_squared"], 3), row["p_value"])
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/parameter-importance?metric=accuracy&ignore=seed&max_levels=10"
+```
+
+`ExperimentTrackerClient.parameter_importance(exp_id, "accuracy")` wraps the endpoint.
 
 ## Project Structure
 

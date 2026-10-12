@@ -23,6 +23,7 @@ from .models import (
     compare_run_records,
     group_runs_by_params,
     metric_trend,
+    parameter_importance,
     pearson_correlation,
     standardize_series,
     write_run_comparison_report,
@@ -1126,6 +1127,28 @@ class LocalStorageBackend:
             )
         results.sort(key=lambda entry: abs(entry["correlation"]), reverse=True)
         return results
+
+    def experiment_parameter_importance(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        ignore: Optional[Sequence[str]] = ("seed",),
+        max_levels: int = 10,
+    ) -> List[dict]:
+        """ANOVA-based hyperparameter importance (eta- and omega-squared).
+
+        Wraps :func:`src.models.parameter_importance` over the experiment's
+        runs. Raises ``KeyError`` when the experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return parameter_importance(
+            self.list_runs(exp_id),
+            metric_name,
+            ignore=tuple(ignore or ()),
+            max_levels=max_levels,
+        )
 
     def experiment_run_groups(
         self,

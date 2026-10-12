@@ -268,6 +268,24 @@ class ExperimentTrackerClient:
             params={"metric": metric_name},
         )
 
+    def parameter_importance(
+        self,
+        exp_id: str,
+        metric_name: str,
+        ignore: Sequence[str] = ("seed",),
+        max_levels: int = 10,
+    ) -> List[dict]:
+        """Rank parameters by ANOVA eta/omega-squared share of metric variance."""
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/parameter-importance",
+            params={
+                "metric": metric_name,
+                "ignore": ",".join(ignore or ()),
+                "max_levels": max_levels,
+            },
+        )
+
     def run_groups(
         self,
         exp_id: str,

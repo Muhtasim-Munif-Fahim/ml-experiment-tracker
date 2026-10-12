@@ -381,6 +381,28 @@ def parameter_correlation(
         raise HTTPException(status_code=404, detail="Experiment not found") from exc
 
 
+@app.get("/experiments/{exp_id}/parameter-importance", response_model=List[dict])
+def parameter_importance_endpoint(
+    exp_id: str,
+    metric: str = Query(...),
+    ignore: str = "seed",
+    max_levels: int = 10,
+):
+    """Rank parameters by ANOVA eta/omega-squared share of metric variance.
+
+    Works for categorical and numeric params; ``ignore`` is comma-separated.
+    """
+    ignore_keys = [name.strip() for name in ignore.split(",") if name.strip()]
+    try:
+        return storage.experiment_parameter_importance(
+            exp_id, metric, ignore=ignore_keys, max_levels=max_levels
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
 def experiment_run_groups(
     exp_id: str,

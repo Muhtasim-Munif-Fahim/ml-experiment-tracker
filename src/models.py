@@ -701,6 +701,179 @@ def group_runs_by_params(
     return groups
 
 
+def _average_ranks(values: Sequence[float]) -> List[float]:
+    """1-based ranks with ties sharing their average rank."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    return ranks
+
+
+def spearman_correlation(xs: List[float], ys: List[float]) -> Optional[float]:
+    """Spearman rank correlation (Pearson on average ranks; ``None`` if undefined)."""
+    if len(xs) != len(ys) or len(xs) < 2:
+        return None
+    return pearson_correlation(_average_ranks(xs), _average_ranks(ys))
+
+
+def _f_survival(f_statistic: float, df_between: int, df_within: int) -> float:
+    """Upper-tail probability of the F distribution (pure Python)."""
+    if df_between <= 0 or df_within <= 0:
+        return 1.0
+    if f_statistic <= 0.0:
+        return 1.0
+    if math.isinf(f_statistic):
+        return 0.0
+    x = df_within / (df_within + df_between * f_statistic)
+    return _betai(df_within / 2.0, df_between / 2.0, x)
+
+
+def one_way_anova(groups: Sequence[Sequence[float]]) -> Optional[dict]:
+    """One-way ANOVA with eta-squared and omega-squared effect sizes.
+
+    ``eta_squared = SS_between / SS_total`` is the share of metric variance
+    explained by the grouping. ``omega_squared`` corrects eta-squared's upward
+    bias with small groups and is clipped at 0. Returns ``None`` with fewer
+    than two non-empty groups, no within-group degrees of freedom, or zero
+    total variance.
+    """
+    clean = [[float(v) for v in g] for g in groups if len(g) > 0]
+    k = len(clean)
+    n = sum(len(g) for g in clean)
+    if k < 2 or n <= k:
+        return None
+    grand = sum(sum(g) for g in clean) / n
+    ss_between = sum(len(g) * (sum(g) / len(g) - grand) ** 2 for g in clean)
+    ss_within = sum(sum((v - sum(g) / len(g)) ** 2 for v in g) for g in clean)
+    ss_total = ss_between + ss_within
+    if ss_total <= 0.0:
+        return None
+    df_between = k - 1
+    df_within = n - k
+    ms_within = ss_within / df_within
+    if ms_within == 0.0:
+        f_statistic = math.inf
+    else:
+        f_statistic = (ss_between / df_between) / ms_within
+    omega = (ss_between - df_between * ms_within) / (ss_total + ms_within)
+    return {
+        "f_statistic": f_statistic,
+        "p_value": _f_survival(f_statistic, df_between, df_within),
+        "df_between": df_between,
+        "df_within": df_within,
+        "eta_squared": ss_between / ss_total,
+        "omega_squared": max(0.0, omega),
+    }
+
+
+def _quantile_bins(values: List[float], max_levels: int) -> List[int]:
+    """Equal-count bin index per value; tied values always share a bin."""
+    ranks = _average_ranks(values)
+    n = len(values)
+    return [min(max_levels - 1, int((r - 1.0) * max_levels / n)) for r in ranks]
+
+
+def parameter_importance(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    ignore: Sequence[str] = ("seed",),
+    max_levels: int = 10,
+) -> List[dict]:
+    """Rank hyperparameters by the share of metric variance they explain.
+
+    Each run contributes its latest ``metric_name`` value and its flattened
+    params. For every parameter, runs are grouped by the parameter's value,
+    and a one-way ANOVA gives ``eta_squared``, ``omega_squared``, ``F`` and a
+    p-value. Unlike Pearson correlation, this also works for categorical
+    parameters (optimizer, activation) and for numeric ones whose effect is
+    not monotone. Numeric parameters with more than ``max_levels`` distinct
+    values are put into ``max_levels`` equal-count bins first, and they also
+    report a ``spearman`` rank correlation. Runs that do not set a parameter
+    are left out of that parameter's analysis. Entries are sorted by
+    ``omega_squared`` and then ``eta_squared``, both descending.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if isinstance(max_levels, bool) or not isinstance(max_levels, int) or max_levels < 2:
+        raise ValueError("max_levels must be an integer >= 2")
+    ignored = set(ignore or ())
+    observations: Dict[str, List[tuple]] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        latest = float(values[-1])
+        for name, value in flatten_params(view.get("params") or {}).items():
+            if name in ignored or value is None:
+                continue
+            observations.setdefault(name, []).append((value, latest))
+
+    results: List[dict] = []
+    for name, pairs in observations.items():
+        numeric = all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v, _ in pairs
+        )
+        ys = [y for _, y in pairs]
+        if numeric:
+            xs = [float(v) for v, _ in pairs]
+            distinct = sorted(set(xs))
+            if len(distinct) > max_levels:
+                labels: List[Any] = _quantile_bins(xs, max_levels)
+                binned = True
+            else:
+                labels = xs
+                binned = False
+        else:
+            labels = [_hashable_param(v) for v, _ in pairs]
+            binned = False
+        buckets: Dict[Any, List[float]] = {}
+        raw: Dict[Any, List[Any]] = {}
+        for label, (value, y) in zip(labels, pairs):
+            buckets.setdefault(label, []).append(y)
+            raw.setdefault(label, []).append(value)
+        anova = one_way_anova(list(buckets.values()))
+        if anova is None:
+            continue
+        level_rows = []
+        for label in sorted(buckets, key=lambda l: (str(type(l)), l)):
+            vals = raw[label]
+            if binned:
+                level = {"min": min(vals), "max": max(vals)}
+            else:
+                level = vals[0]
+            level_rows.append({
+                "value": level,
+                "n": len(buckets[label]),
+                "mean": sum(buckets[label]) / len(buckets[label]),
+            })
+        results.append({
+            "param_name": name,
+            "kind": "numeric" if numeric else "categorical",
+            "binned": binned,
+            "levels": len(buckets),
+            "run_count": len(pairs),
+            **anova,
+            "spearman": spearman_correlation([float(v) for v, _ in pairs], ys) if numeric else None,
+            "level_means": level_rows,
+        })
+    results.sort(key=lambda r: (-r["omega_squared"], -r["eta_squared"], r["param_name"]))
+    return results
+
+
 @dataclass
 class Artifact:
     name: str

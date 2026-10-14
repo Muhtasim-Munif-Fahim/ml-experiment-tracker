@@ -1150,6 +1150,25 @@ class LocalStorageBackend:
             max_levels=max_levels,
         )
 
+    def experiment_best_so_far(
+        self,
+        experiment_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+    ) -> dict:
+        """Best-so-far / simple-regret curve for one experiment metric."""
+        from .models import best_so_far_curve
+
+        if self.load_experiment(experiment_id) is None:
+            raise KeyError(f"experiment not found: {experiment_id}")
+        return best_so_far_curve(
+            self.list_runs(experiment_id),
+            metric_name,
+            maximize=maximize,
+        )
+
+
     def experiment_run_groups(
         self,
         exp_id: str,

@@ -874,6 +874,109 @@ def parameter_importance(
     return results
 
 
+
+def best_so_far_curve(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    maximize: bool = True,
+) -> dict:
+    """Build the best-so-far / simple-regret curve for an experiment metric.
+
+    Runs that recorded ``metric_name`` are ordered by ``created_at`` (falling
+    back to run id). Walking that order, the curve tracks the best metric seen
+    so far and the simple regret against the eventual best. Useful for HPO /
+    sweep dashboards: after ``t`` trials, how good is the incumbent, and how
+    much is left on the table?
+
+    Returns a mapping with ``points`` (one row per contributing run),
+    ``final_best``, ``final_regret`` (always 0), ``run_count``, and
+    ``maximize``.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+
+    rows: List[dict] = []
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        step = None
+        for metric in view.get("metrics", []) or []:
+            if metric.get("name") == metric_name:
+                step = metric.get("step")
+        rows.append(
+            {
+                "run_id": view.get("id"),
+                "name": view.get("name"),
+                "created_at": view.get("created_at") or "",
+                "value": float(values[-1]),
+                "step": step,
+            }
+        )
+
+    rows.sort(key=lambda r: (str(r["created_at"]), str(r["run_id"] or "")))
+    if not rows:
+        return {
+            "metric_name": metric_name,
+            "maximize": bool(maximize),
+            "run_count": 0,
+            "final_best": None,
+            "final_regret": None,
+            "points": [],
+        }
+
+    values = [r["value"] for r in rows]
+    eventual_best = max(values) if maximize else min(values)
+    best_so_far = None
+    points: List[dict] = []
+    for index, row in enumerate(rows, start=1):
+        value = row["value"]
+        if best_so_far is None:
+            best_so_far = value
+            improved = True
+        elif maximize and value > best_so_far:
+            best_so_far = value
+            improved = True
+        elif (not maximize) and value < best_so_far:
+            best_so_far = value
+            improved = True
+        else:
+            improved = False
+        if maximize:
+            regret = eventual_best - best_so_far
+        else:
+            regret = best_so_far - eventual_best
+        points.append(
+            {
+                "index": index,
+                "run_id": row["run_id"],
+                "name": row["name"],
+                "created_at": row["created_at"],
+                "value": value,
+                "step": row["step"],
+                "best_so_far": best_so_far,
+                "simple_regret": regret,
+                "improved": improved,
+            }
+        )
+
+    return {
+        "metric_name": metric_name,
+        "maximize": bool(maximize),
+        "run_count": len(points),
+        "final_best": eventual_best,
+        "final_regret": 0.0,
+        "points": points,
+    }
+
+
+
 @dataclass
 class Artifact:
     name: str

@@ -403,6 +403,22 @@ def parameter_importance_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+
+@app.get("/experiments/{exp_id}/best-so-far", response_model=dict)
+def experiment_best_so_far(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+):
+    """Best-so-far / simple-regret curve for one experiment metric over time."""
+    try:
+        return storage.experiment_best_so_far(exp_id, metric, maximize=maximize)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
 def experiment_run_groups(
     exp_id: str,

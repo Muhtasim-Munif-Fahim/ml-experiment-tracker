@@ -286,6 +286,20 @@ class ExperimentTrackerClient:
             },
         )
 
+    def best_so_far(
+        self,
+        exp_id: str,
+        metric_name: str,
+        maximize: bool = True,
+    ) -> dict:
+        """Best-so-far / simple-regret curve for one experiment metric."""
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/best-so-far",
+            params={"metric": metric_name, "maximize": maximize},
+        )
+
+
     def run_groups(
         self,
         exp_id: str,

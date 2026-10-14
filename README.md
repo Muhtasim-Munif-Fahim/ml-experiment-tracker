@@ -17,6 +17,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Shareable Markdown/HTML run-comparison reports
 - Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
+- Best-so-far / simple-regret curves for sweep progress over time
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start

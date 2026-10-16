@@ -404,6 +404,33 @@ def parameter_importance_endpoint(
 
 
 
+@app.get("/experiments/{exp_id}/learning-curve-forecast", response_model=dict)
+def experiment_learning_curve_forecast(
+    exp_id: str,
+    metric: str = Query(...),
+    target_step: float = Query(..., gt=0),
+    maximize: bool = True,
+    model: str = "auto",
+    min_points: int = 4,
+    margin: float = 0.0,
+):
+    """Extrapolate each run's learning curve and flag runs unlikely to win."""
+    try:
+        return storage.experiment_learning_curve_forecast(
+            exp_id,
+            metric,
+            target_step,
+            maximize=maximize,
+            model=model,
+            min_points=min_points,
+            margin=margin,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/best-so-far", response_model=dict)
 def experiment_best_so_far(
     exp_id: str,

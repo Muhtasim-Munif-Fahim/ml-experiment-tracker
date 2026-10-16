@@ -976,6 +976,208 @@ def best_so_far_curve(
     }
 
 
+_CURVE_MODELS = ("pow3", "exp3")
+
+
+def _curve_history(run: Any, metric_name: str) -> List[tuple]:
+    """``(step, value)`` pairs for one metric, steps defaulting to 1..n."""
+    view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+    points: List[tuple] = []
+    index = 0
+    for metric in view.get("metrics", []) or []:
+        if metric.get("name") != metric_name or metric.get("value") is None:
+            continue
+        index += 1
+        value = float(metric["value"])
+        if not math.isfinite(value):
+            continue
+        step = metric.get("step")
+        points.append((float(step) if step is not None else float(index), value))
+    # Keep the last value logged at each step, ordered by step.
+    by_step: Dict[float, float] = {}
+    for step, value in points:
+        by_step[step] = value
+    return sorted(by_step.items())
+
+
+def _fit_linear(xs: Sequence[float], ys: Sequence[float]) -> tuple:
+    """Least-squares ``y = a + b * x``; returns ``(a, b, sse)``."""
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return my, 0.0, sum((y - my) ** 2 for y in ys)
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    a = my - b * mx
+    sse = sum((y - (a + b * x)) ** 2 for x, y in zip(xs, ys))
+    return a, b, sse
+
+
+def _fit_curve_model(steps: Sequence[float], values: Sequence[float], model: str) -> dict:
+    """Profile least squares over the rate ``c`` on a log grid.
+
+    ``pow3``: ``y = a + b * t ** (-c)`` (Domhan et al., 2015).
+    ``exp3``: ``y = a + b * exp(-c * t / t_max)``.
+    For a fixed ``c`` both are linear in ``(a, b)``, so the fit is a 1-D grid
+    search with closed-form inner solves: deterministic and dependency-free.
+    """
+    t_max = max(steps)
+    best = None
+    for i in range(121):
+        c = 10 ** (-2 + 3.0 * i / 120)  # 0.01 .. 10
+        if model == "pow3":
+            xs = [t ** (-c) for t in steps]
+        else:
+            xs = [math.exp(-c * t / t_max) for t in steps]
+        a, b, sse = _fit_linear(xs, values)
+        if best is None or sse < best["sse"] - 1e-15:
+            best = {"model": model, "a": a, "b": b, "c": c, "sse": sse}
+    return best
+
+
+def _curve_predict(fit: dict, step: float, t_max: float) -> float:
+    if fit["model"] == "pow3":
+        return fit["a"] + fit["b"] * step ** (-fit["c"])
+    return fit["a"] + fit["b"] * math.exp(-fit["c"] * step / t_max)
+
+
+def learning_curve_extrapolation(
+    run: Any,
+    metric_name: str,
+    target_step: float,
+    *,
+    model: str = "auto",
+    min_points: int = 4,
+) -> dict:
+    """Fit a saturating learning curve to one run and extrapolate it.
+
+    Fits ``pow3`` (``a + b * t^-c``) and/or ``exp3`` (``a + b * exp(-c t)``)
+    to the run's ``(step, value)`` history and predicts the metric at
+    ``target_step`` (e.g. the planned final epoch). ``model="auto"`` keeps the
+    family with the lower residual sum of squares. The fitted ``a`` is the
+    asymptote (the value the curve approaches with unlimited steps).
+
+    Returns ``status="insufficient_data"`` (no prediction) when fewer than
+    ``min_points`` distinct steps were logged. Otherwise returns the fitted
+    parameters, ``predicted_value``, ``asymptote``, ``rmse``, ``r2``,
+    ``last_step``/``last_value`` and ``predicted_change`` from the last value.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if model != "auto" and model not in _CURVE_MODELS:
+        raise ValueError(f"model must be 'auto' or one of {_CURVE_MODELS}")
+    if isinstance(min_points, bool) or int(min_points) < 3:
+        raise ValueError("min_points must be an integer >= 3")
+    target = float(target_step)
+    if not math.isfinite(target) or target <= 0:
+        raise ValueError("target_step must be a positive number")
+
+    view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+    history = _curve_history(view, metric_name)
+    base = {
+        "run_id": view.get("id"),
+        "name": view.get("name"),
+        "metric_name": metric_name,
+        "target_step": target,
+        "n_points": len(history),
+    }
+    if len(history) < int(min_points):
+        return {**base, "status": "insufficient_data", "predicted_value": None}
+    steps = [s for s, _ in history]
+    values = [v for _, v in history]
+    if min(steps) <= 0:
+        raise ValueError("metric steps must be positive for curve fitting")
+
+    families = _CURVE_MODELS if model == "auto" else (model,)
+    fits = [_fit_curve_model(steps, values, family) for family in families]
+    fit = min(fits, key=lambda f: f["sse"])
+    t_max = max(steps)
+    predicted = _curve_predict(fit, target, t_max)
+    mean_v = sum(values) / len(values)
+    sst = sum((v - mean_v) ** 2 for v in values)
+    rmse = math.sqrt(fit["sse"] / len(values))
+    r2 = 1.0 - fit["sse"] / sst if sst > 0 else 1.0
+    return {
+        **base,
+        "status": "ok",
+        "model": fit["model"],
+        "params": {"a": fit["a"], "b": fit["b"], "c": fit["c"]},
+        "asymptote": fit["a"],
+        "predicted_value": predicted,
+        "last_step": steps[-1],
+        "last_value": values[-1],
+        "predicted_change": predicted - values[-1],
+        "rmse": rmse,
+        "r2": r2,
+    }
+
+
+def learning_curve_forecast(
+    runs: Sequence[Any],
+    metric_name: str,
+    target_step: float,
+    *,
+    maximize: bool = True,
+    model: str = "auto",
+    min_points: int = 4,
+    margin: float = 0.0,
+) -> dict:
+    """Extrapolate every run's curve and flag runs unlikely to beat the incumbent.
+
+    The incumbent is the best predicted value at ``target_step`` across runs
+    (so finished and in-flight runs compete on the same footing). A run gets
+    ``terminate_hint=True`` when its predicted value is worse than the
+    incumbent by more than ``margin`` -- the learning-curve early-termination
+    heuristic of Domhan, Springenberg and Hutter (IJCAI 2015), here with a
+    point forecast instead of a posterior.
+    """
+    if margin < 0:
+        raise ValueError("margin must be non-negative")
+    rows = [
+        learning_curve_extrapolation(
+            run, metric_name, target_step, model=model, min_points=min_points
+        )
+        for run in runs
+    ]
+    rows = [r for r in rows if r["n_points"] > 0]
+    fitted = [r for r in rows if r["status"] == "ok"]
+    incumbent = None
+    if fitted:
+        chooser = max if maximize else min
+        incumbent = chooser(fitted, key=lambda r: r["predicted_value"])
+    for row in rows:
+        if row["status"] != "ok" or incumbent is None:
+            row["terminate_hint"] = False
+            row["gap_to_incumbent"] = None
+            continue
+        if maximize:
+            gap = incumbent["predicted_value"] - row["predicted_value"]
+        else:
+            gap = row["predicted_value"] - incumbent["predicted_value"]
+        row["gap_to_incumbent"] = gap
+        row["terminate_hint"] = bool(gap > margin)
+    rows.sort(
+        key=lambda r: (
+            r["status"] != "ok",
+            -(r["predicted_value"] or 0.0) if maximize else (r["predicted_value"] or 0.0),
+            str(r["run_id"] or ""),
+        )
+    )
+    return {
+        "metric_name": metric_name,
+        "maximize": bool(maximize),
+        "target_step": float(target_step),
+        "margin": float(margin),
+        "incumbent_run_id": incumbent["run_id"] if incumbent else None,
+        "incumbent_predicted_value": incumbent["predicted_value"] if incumbent else None,
+        "run_count": len(rows),
+        "fitted_count": len(fitted),
+        "terminate_count": sum(1 for r in rows if r["terminate_hint"]),
+        "runs": rows,
+    }
+
+
 
 @dataclass
 class Artifact:

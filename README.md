@@ -18,6 +18,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
 - Best-so-far / simple-regret curves for sweep progress over time
+- Learning-curve extrapolation (pow3 / exp3 saturating fits) with predicted final metric, asymptote and early-termination hints for runs unlikely to beat the incumbent
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start
@@ -172,6 +173,33 @@ curl "http://localhost:8000/experiments/$EXP/run-groups?metric=loss&group_by=opt
 
 `ExperimentTrackerClient.run_groups(exp_id, "accuracy", group_by=["optimizer"])`
 wraps the endpoint.
+
+## Learning-curve extrapolation
+
+`learning_curve_extrapolation(run, metric, target_step)` fits a saturating
+curve to a run's `(step, value)` history -- `pow3` (`a + b * t^-c`, Domhan et
+al. 2015) or `exp3` (`a + b * exp(-c t)`), `model="auto"` keeps the better
+fit -- and predicts the metric at `target_step`. The fit is a deterministic
+profile least-squares grid over `c` with closed-form `(a, b)`, so it needs no
+extra dependencies. `a` is the asymptote.
+
+`learning_curve_forecast(runs, metric, target_step, maximize=True, margin=0.0)`
+does this for every run and sets `terminate_hint=True` on runs whose forecast
+trails the best forecast by more than `margin`: candidates to stop early in a
+sweep.
+
+```python
+from src.models import learning_curve_forecast
+
+forecast = learning_curve_forecast(runs, "val_accuracy", target_step=50, margin=0.01)
+[r["run_id"] for r in forecast["runs"] if r["terminate_hint"]]
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/learning-curve-forecast?metric=val_accuracy&target_step=50&margin=0.01"
+```
+
+`ExperimentTrackerClient.learning_curve_forecast(exp_id, "val_accuracy", 50)` wraps the endpoint.
 
 ## Hyperparameter importance
 

@@ -1168,6 +1168,32 @@ class LocalStorageBackend:
             maximize=maximize,
         )
 
+    def experiment_learning_curve_forecast(
+        self,
+        experiment_id: str,
+        metric_name: str,
+        target_step: float,
+        *,
+        maximize: bool = True,
+        model: str = "auto",
+        min_points: int = 4,
+        margin: float = 0.0,
+    ) -> dict:
+        """Extrapolated learning curves and terminate hints for an experiment."""
+        from .models import learning_curve_forecast
+
+        if self.load_experiment(experiment_id) is None:
+            raise KeyError(f"experiment not found: {experiment_id}")
+        return learning_curve_forecast(
+            self.list_runs(experiment_id),
+            metric_name,
+            target_step,
+            maximize=maximize,
+            model=model,
+            min_points=min_points,
+            margin=margin,
+        )
+
 
     def experiment_run_groups(
         self,

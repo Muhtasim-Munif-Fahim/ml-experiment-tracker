@@ -286,6 +286,30 @@ class ExperimentTrackerClient:
             },
         )
 
+    def learning_curve_forecast(
+        self,
+        exp_id: str,
+        metric_name: str,
+        target_step: float,
+        maximize: bool = True,
+        model: str = "auto",
+        min_points: int = 4,
+        margin: float = 0.0,
+    ) -> dict:
+        """Extrapolated learning curves and terminate hints for an experiment."""
+        return self._request(
+            "GET",
+            f"/experiments/{exp_id}/learning-curve-forecast",
+            params={
+                "metric": metric_name,
+                "target_step": target_step,
+                "maximize": maximize,
+                "model": model,
+                "min_points": min_points,
+                "margin": margin,
+            },
+        )
+
     def best_so_far(
         self,
         exp_id: str,

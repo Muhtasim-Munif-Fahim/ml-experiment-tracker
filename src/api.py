@@ -446,6 +446,41 @@ def experiment_best_so_far(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/experiments/{exp_id}/friedman")
+def experiment_friedman_comparison(
+    exp_id: str,
+    metric: str = Query(...),
+    block_param: str = "seed",
+    ignore: str = "seed",
+    group_by: Optional[str] = None,
+    maximize: bool = True,
+    alpha: float = Query(0.05, gt=0.0, lt=1.0),
+):
+    """Friedman rank test + Nemenyi critical difference over matched blocks.
+
+    ``ignore`` and ``group_by`` are comma-separated parameter names. Returns
+    ``null`` when there are not enough configurations or complete blocks.
+    """
+    ignore_keys = [name.strip() for name in ignore.split(",") if name.strip()]
+    group_keys = (
+        [name.strip() for name in group_by.split(",") if name.strip()] if group_by else None
+    )
+    try:
+        return storage.experiment_friedman_comparison(
+            exp_id,
+            metric,
+            block_param=block_param,
+            ignore=ignore_keys,
+            group_by=group_keys,
+            maximize=maximize,
+            alpha=alpha,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
 def experiment_run_groups(
     exp_id: str,

@@ -21,6 +21,7 @@ from .models import (
     Experiment,
     Run,
     compare_run_records,
+    friedman_comparison,
     group_runs_by_params,
     metric_trend,
     parameter_importance,
@@ -1222,6 +1223,37 @@ class LocalStorageBackend:
             group_by=group_by,
             maximize=maximize,
             confidence=confidence,
+        )
+
+    def experiment_friedman_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        block_param: str = "seed",
+        ignore: Optional[Sequence[str]] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        alpha: float = 0.05,
+    ) -> Optional[dict]:
+        """Friedman test + Nemenyi critical difference across matched blocks.
+
+        Wraps :func:`src.models.friedman_comparison` over the experiment's
+        runs (configurations ranked within each ``block_param`` value, e.g.
+        seed or dataset). Returns ``None`` when there are fewer than two
+        configurations or two complete blocks. Raises ``KeyError`` when the
+        experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return friedman_comparison(
+            self.list_runs(exp_id),
+            metric_name,
+            block_param=block_param,
+            ignore=tuple(ignore or ()),
+            group_by=group_by,
+            maximize=maximize,
+            alpha=alpha,
         )
 
     def experiment_metric_long(

@@ -344,6 +344,28 @@ class ExperimentTrackerClient:
             params["group_by"] = ",".join(group_by)
         return self._request("GET", f"/experiments/{exp_id}/run-groups", params=params)
 
+    def friedman_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        block_param: str = "seed",
+        ignore: Sequence[str] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        alpha: float = 0.05,
+    ) -> Optional[dict]:
+        """Friedman test + Nemenyi critical difference across matched blocks."""
+        params = {
+            "metric": metric_name,
+            "block_param": block_param,
+            "ignore": ",".join(ignore or ()),
+            "maximize": maximize,
+            "alpha": alpha,
+        }
+        if group_by:
+            params["group_by"] = ",".join(group_by)
+        return self._request("GET", f"/experiments/{exp_id}/friedman", params=params)
+
     def metric_baseline(self, exp_id: str, metric_name: str) -> dict:
         """Fetch experiment-wide descriptive statistics for one metric."""
         return self._request(

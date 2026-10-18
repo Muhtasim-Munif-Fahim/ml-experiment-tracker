@@ -875,6 +875,254 @@ def parameter_importance(
 
 
 
+def _regularized_gamma_q(a: float, x: float) -> float:
+    """Upper regularized incomplete gamma ``Q(a, x)`` (Numerical Recipes)."""
+    if x <= 0.0:
+        return 1.0
+    if math.isinf(x):
+        return 0.0
+    gln = math.lgamma(a)
+    if x < a + 1.0:
+        term = total = 1.0 / a
+        ap = a
+        for _ in range(1000):
+            ap += 1.0
+            term *= x / ap
+            total += term
+            if abs(term) < abs(total) * 1e-15:
+                break
+        return max(0.0, 1.0 - total * math.exp(-x + a * math.log(x) - gln))
+    b = x + 1.0 - a
+    c = 1.0 / 1e-300
+    d = 1.0 / b
+    h = d
+    for i in range(1, 1000):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        d = 1e-300 if abs(d) < 1e-300 else d
+        c = b + an / c
+        c = 1e-300 if abs(c) < 1e-300 else c
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return min(1.0, math.exp(-x + a * math.log(x) - gln) * h)
+
+
+def chi_square_survival(statistic: float, degrees_of_freedom: float) -> float:
+    """Upper-tail probability of the chi-square distribution (pure Python)."""
+    if degrees_of_freedom <= 0:
+        raise ValueError("degrees_of_freedom must be positive")
+    return _regularized_gamma_q(degrees_of_freedom / 2.0, max(0.0, statistic) / 2.0)
+
+
+def _normal_pdf(z: float) -> float:
+    return math.exp(-0.5 * z * z) / math.sqrt(2.0 * math.pi)
+
+
+def _normal_cdf(z: float) -> float:
+    return 0.5 * math.erfc(-z / math.sqrt(2.0))
+
+
+def _range_cdf(q: float, k: int) -> float:
+    """CDF of the range of ``k`` iid standard normals (studentized range, df=inf)."""
+    if q <= 0.0:
+        return 0.0
+    # Simpson's rule on z in [-8, 8]
+    n, lo, hi = 800, -8.0, 8.0
+    h = (hi - lo) / n
+    total = 0.0
+    for i in range(n + 1):
+        z = lo + i * h
+        f = _normal_pdf(z) * (_normal_cdf(z + q) - _normal_cdf(z)) ** (k - 1)
+        total += f * (1 if i in (0, n) else (4 if i % 2 else 2))
+    return min(1.0, k * total * h / 3.0)
+
+
+def nemenyi_critical_value(k: int, alpha: float = 0.05) -> float:
+    """Nemenyi ``q_alpha``: the studentized-range quantile (df=inf) over sqrt(2).
+
+    Matches Table 5 of Demšar (2006), e.g. ``k=3, alpha=0.05 -> 2.343``,
+    and is computed numerically, so any number of configurations works.
+    """
+    if isinstance(k, bool) or not isinstance(k, int) or k < 2:
+        raise ValueError("k must be an integer >= 2")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    target = 1.0 - alpha
+    lo, hi = 0.0, 20.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if _range_cdf(mid, k) < target:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0 / math.sqrt(2.0)
+
+
+def friedman_comparison(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    block_param: str = "seed",
+    ignore: Sequence[str] = ("seed",),
+    group_by: Optional[Sequence[str]] = None,
+    maximize: bool = True,
+    alpha: float = 0.05,
+) -> Optional[dict]:
+    """Friedman test with a Nemenyi post-hoc over matched blocks (Demšar, 2006).
+
+    Compares several configurations evaluated on the same *blocks* -- seeds,
+    datasets or CV folds, given by the ``block_param`` parameter -- using
+    ranks instead of raw metric values, so it needs no normality assumption
+    and is not dominated by one block with a large spread.
+
+    Configurations are formed as in :func:`group_runs_by_params` (params
+    minus ``ignore`` and ``block_param``, or exactly ``group_by``). Each run
+    contributes its latest ``metric_name``; repeated runs of one
+    configuration in one block are averaged. Only blocks in which *every*
+    configuration has a value are used (a complete design). Within each
+    block configurations are ranked 1 (best) to ``k``, ties sharing their
+    average rank.
+
+    Returns ``None`` with fewer than two configurations or two complete
+    blocks. Otherwise a dict with:
+
+    * ``chi_square`` / ``p_value``: tie-corrected Friedman statistic,
+      chi-square with ``k - 1`` degrees of freedom;
+    * ``iman_davenport_f`` / ``iman_davenport_p_value``: the less
+      conservative F form ``(N-1) chi2 / (N(k-1) - chi2)`` (``None`` with
+      p-value 0 when every block ranks the configurations identically);
+    * ``critical_difference``: Nemenyi ``q_alpha * sqrt(k(k+1) / (6N))``;
+      two configurations differ significantly when their average ranks
+      differ by more than this;
+    * ``configurations`` sorted by average rank, each with ``params``,
+      ``average_rank``, ``mean`` and ``worse_than_best`` (rank gap to the
+      best exceeds the critical difference);
+    * ``pairwise``: every pair's rank difference and significance;
+    * ``blocks`` used and ``dropped_blocks`` (incomplete).
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if not block_param:
+        raise ValueError("block_param is required")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    ignored = set(ignore or ()) | {block_param}
+    keys = [k for k in group_by if k != block_param] if group_by else None
+    configs: Dict[str, dict] = {}
+    cells: Dict[str, Dict[str, List[float]]] = {}
+    block_labels: Dict[str, Any] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        params = flatten_params(view.get("params") or {})
+        if block_param not in params or params[block_param] is None:
+            continue
+        if keys is not None:
+            config = {k: params.get(k) for k in keys}
+        else:
+            config = {k: v for k, v in sorted(params.items()) if k not in ignored}
+        ckey = _hashable_param(config)
+        bkey = _hashable_param(params[block_param])
+        configs.setdefault(ckey, config)
+        block_labels.setdefault(bkey, params[block_param])
+        cells.setdefault(ckey, {}).setdefault(bkey, []).append(float(values[-1]))
+
+    k = len(configs)
+    if k < 2:
+        return None
+    config_keys = sorted(configs)
+    complete = [b for b in block_labels if all(b in cells[c] for c in config_keys)]
+    complete.sort()
+    n_blocks = len(complete)
+    if n_blocks < 2:
+        return None
+
+    rank_sums = [0.0] * k
+    value_sums = [0.0] * k
+    tie_term = 0.0
+    for b in complete:
+        row = [sum(cells[c][b]) / len(cells[c][b]) for c in config_keys]
+        for j, v in enumerate(row):
+            value_sums[j] += v
+        ranks = _average_ranks([-v if maximize else v for v in row])
+        for j, r in enumerate(ranks):
+            rank_sums[j] += r
+        counts: Dict[float, int] = {}
+        for v in row:
+            counts[v] = counts.get(v, 0) + 1
+        tie_term += sum(t ** 3 - t for t in counts.values())
+
+    avg = [s / n_blocks for s in rank_sums]
+    chi2 = 12.0 * n_blocks / (k * (k + 1)) * (sum(r * r for r in avg) - k * (k + 1) ** 2 / 4.0)
+    correction = 1.0 - tie_term / (n_blocks * (k ** 3 - k))
+    if correction <= 0.0:
+        chi2 = 0.0  # every block is a complete tie
+    else:
+        chi2 /= correction
+    df1 = k - 1
+    df2 = (k - 1) * (n_blocks - 1)
+    denom = n_blocks * (k - 1) - chi2
+    # perfect agreement across blocks makes the F statistic infinite; report
+    # it as None (JSON-safe) with p-value 0
+    f_stat = None if denom <= 0.0 else (n_blocks - 1) * chi2 / denom
+    cd = nemenyi_critical_value(k, alpha) * math.sqrt(k * (k + 1) / (6.0 * n_blocks))
+
+    order = sorted(range(k), key=lambda j: (avg[j], config_keys[j]))
+    best = order[0]
+    rows = [
+        {
+            "params": configs[config_keys[j]],
+            "average_rank": avg[j],
+            "mean": value_sums[j] / n_blocks,
+            "rank_gap_to_best": avg[j] - avg[best],
+            "worse_than_best": (avg[j] - avg[best]) > cd,
+        }
+        for j in order
+    ]
+    pairwise = []
+    for a_pos in range(k):
+        for b_pos in range(a_pos + 1, k):
+            ja, jb = order[a_pos], order[b_pos]
+            diff = avg[jb] - avg[ja]
+            pairwise.append({
+                "a": a_pos,
+                "b": b_pos,
+                "rank_difference": diff,
+                "significant": diff > cd,
+            })
+    return {
+        "metric": metric_name,
+        "block_param": block_param,
+        "maximize": maximize,
+        "k": k,
+        "n_blocks": n_blocks,
+        "blocks": [block_labels[b] for b in complete],
+        "dropped_blocks": [block_labels[b] for b in sorted(block_labels) if b not in complete],
+        "chi_square": chi2,
+        "df": df1,
+        "p_value": chi_square_survival(chi2, df1) if chi2 > 0 else 1.0,
+        "iman_davenport_f": f_stat,
+        "iman_davenport_df": [df1, df2],
+        "iman_davenport_p_value": (
+            1.0 if chi2 <= 0 else (0.0 if f_stat is None else _f_survival(f_stat, df1, df2))
+        ),
+        "alpha": alpha,
+        "critical_difference": cd,
+        "configurations": rows,
+        "pairwise": pairwise,
+    }
+
+
 def best_so_far_curve(
     runs: Sequence[Any],
     metric_name: str,

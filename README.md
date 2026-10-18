@@ -19,6 +19,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
 - Best-so-far / simple-regret curves for sweep progress over time
 - Learning-curve extrapolation (pow3 / exp3 saturating fits) with predicted final metric, asymptote and early-termination hints for runs unlikely to beat the incumbent
+- Friedman rank test with Iman-Davenport F and Nemenyi critical difference for comparing configurations across matched seeds / datasets / folds
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start
@@ -172,6 +173,37 @@ curl "http://localhost:8000/experiments/$EXP/run-groups?metric=loss&group_by=opt
 ```
 
 `ExperimentTrackerClient.run_groups(exp_id, "accuracy", group_by=["optimizer"])`
+wraps the endpoint.
+
+## Friedman / Nemenyi comparison across seeds or datasets
+
+When every configuration is run on the same seeds, datasets or CV folds,
+`friedman_comparison` (endpoint `/experiments/{id}/friedman`) ranks the
+configurations within each block (`block_param`, default `seed`) and runs
+the Friedman test on the average ranks (tie-corrected chi-square plus the
+Iman-Davenport F form), then the Nemenyi post-hoc: two configurations differ
+when their average ranks differ by more than the critical difference
+`q_alpha * sqrt(k(k+1) / (6N))` (Demšar, "Statistical Comparisons of
+Classifiers over Multiple Data Sets", JMLR 2006). Ranks need no normality
+assumption and are not swamped by one high-variance block. Only blocks where
+every configuration has a value are used; the rest are listed in
+`dropped_blocks`. `q_alpha` comes from the studentized range distribution,
+computed numerically, so any number of configurations works.
+
+```python
+from src.models import friedman_comparison
+
+res = friedman_comparison(runs, "accuracy", block_param="seed", alpha=0.05)
+res["p_value"], res["critical_difference"]
+for c in res["configurations"]:
+    print(c["params"], c["average_rank"], c["worse_than_best"])
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/friedman?metric=accuracy&block_param=dataset&ignore=seed,dataset"
+```
+
+`ExperimentTrackerClient.friedman_comparison(exp_id, "accuracy", block_param="dataset")`
 wraps the endpoint.
 
 ## Learning-curve extrapolation

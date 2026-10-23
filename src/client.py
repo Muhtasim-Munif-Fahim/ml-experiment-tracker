@@ -366,6 +366,35 @@ class ExperimentTrackerClient:
             params["group_by"] = ",".join(group_by)
         return self._request("GET", f"/experiments/{exp_id}/friedman", params=params)
 
+    def cv_bayesian_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        block_param: str = "fold",
+        ignore: Sequence[str] = ("fold", "seed"),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        test_fraction: Optional[float] = None,
+        rope: float = 0.01,
+        confidence: float = 0.95,
+        decision_threshold: float = 0.95,
+    ) -> Optional[dict]:
+        """Corrected resampled / Bayesian correlated t-test of each config vs the best."""
+        params = {
+            "metric": metric_name,
+            "block_param": block_param,
+            "ignore": ",".join(ignore or ()),
+            "maximize": maximize,
+            "rope": rope,
+            "confidence": confidence,
+            "decision_threshold": decision_threshold,
+        }
+        if group_by:
+            params["group_by"] = ",".join(group_by)
+        if test_fraction is not None:
+            params["test_fraction"] = test_fraction
+        return self._request("GET", f"/experiments/{exp_id}/cv-bayesian", params=params)
+
     def metric_baseline(self, exp_id: str, metric_name: str) -> dict:
         """Fetch experiment-wide descriptive statistics for one metric."""
         return self._request(

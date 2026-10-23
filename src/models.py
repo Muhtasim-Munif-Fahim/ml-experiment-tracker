@@ -1123,6 +1123,222 @@ def friedman_comparison(
     }
 
 
+def _t_cdf(x: float, degrees_of_freedom: float) -> float:
+    """Student-t CDF via the incomplete-beta tail (pure Python)."""
+
+    if math.isinf(x):
+        return 1.0 if x > 0 else 0.0
+    half_tail = 0.5 * _t_two_sided_p(abs(x), degrees_of_freedom)
+    return 1.0 - half_tail if x >= 0 else half_tail
+
+
+def correlated_t_test(
+    differences: Sequence[float],
+    *,
+    test_fraction: float,
+    rope: float = 0.0,
+    confidence: float = 0.95,
+) -> dict:
+    """Corrected resampled t-test and Bayesian correlated t-test on CV differences.
+
+    ``differences`` are per-fold (or per-repetition-and-fold) score
+    differences ``a - b`` from the *same* resampling splits. Training sets of
+    different folds overlap, so the differences are correlated and the naive
+    paired t-test is badly overconfident. With ``rho = test_fraction`` (the
+    share of the data in each test fold, ``1 / K`` for K-fold CV), the
+    Nadeau & Bengio (2003) correction inflates the variance to
+    ``(1 / n + rho / (1 - rho)) * s^2``.
+
+    The Bayesian correlated t-test of Corani & Benavoli (2015) uses the same
+    scale: the posterior of the mean difference is a Student-t with
+    ``n - 1`` degrees of freedom, location ``mean`` and that scale. Given a
+    region of practical equivalence ``[-rope, rope]`` it returns
+    ``p_a_better`` (``P(mu > rope)``), ``p_rope`` and ``p_b_better``
+    (``P(mu < -rope)``).
+
+    Requires at least two differences and ``0 < test_fraction < 1``. When all
+    differences are identical the posterior collapses onto their value.
+    """
+    values = [float(v) for v in differences]
+    n = len(values)
+    if n < 2:
+        raise ValueError("at least two differences are required")
+    if any(math.isnan(v) or math.isinf(v) for v in values):
+        raise ValueError("differences must be finite")
+    if not 0.0 < test_fraction < 1.0:
+        raise ValueError("test_fraction must be in (0, 1)")
+    if not rope >= 0.0:
+        raise ValueError("rope must be non-negative")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be in (0, 1)")
+    mean = sum(values) / n
+    var = sum((v - mean) ** 2 for v in values) / (n - 1)
+    df = n - 1
+    factor = 1.0 / n + test_fraction / (1.0 - test_fraction)
+    scale = math.sqrt(factor * var)
+    naive_scale = math.sqrt(var / n)
+    if scale > 0.0:
+        t_stat = mean / scale
+        p_value = _t_two_sided_p(t_stat, df)
+        naive_p = _t_two_sided_p(mean / naive_scale, df)
+        half = student_t_critical(confidence, df) * scale
+        upper = 1.0 - _t_cdf((rope - mean) / scale, df)
+        lower = _t_cdf((-rope - mean) / scale, df)
+    else:
+        t_stat = None
+        p_value = naive_p = 1.0 if mean == 0.0 else 0.0
+        half = 0.0
+        upper = 1.0 if mean > rope else 0.0
+        lower = 1.0 if mean < -rope else 0.0
+    upper, lower = max(0.0, min(1.0, upper)), max(0.0, min(1.0, lower))
+    return {
+        "n": n,
+        "mean_difference": mean,
+        "std": math.sqrt(var),
+        "test_fraction": test_fraction,
+        "correction_factor": factor,
+        "scale": scale,
+        "df": df,
+        "t_statistic": t_stat,
+        "p_value": p_value,
+        "naive_p_value": naive_p,
+        "confidence": confidence,
+        "ci_low": mean - half,
+        "ci_high": mean + half,
+        "rope": rope,
+        "p_a_better": upper,
+        "p_rope": max(0.0, 1.0 - upper - lower),
+        "p_b_better": lower,
+    }
+
+
+def cv_bayesian_comparison(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    block_param: str = "fold",
+    ignore: Sequence[str] = ("fold", "seed"),
+    group_by: Optional[Sequence[str]] = None,
+    maximize: bool = True,
+    test_fraction: Optional[float] = None,
+    rope: float = 0.01,
+    confidence: float = 0.95,
+    decision_threshold: float = 0.95,
+) -> Optional[dict]:
+    """Compare configurations to the best one over shared CV folds.
+
+    Configurations are formed as in :func:`friedman_comparison` and matched
+    on the ``block_param`` value (fold id; repeated runs in one cell are
+    averaged). Only blocks shared by every configuration are used. The
+    configuration with the best mean is the reference; for every other one
+    the per-fold differences ``best - other`` (sign-flipped when
+    ``maximize=False`` so positive always favours the reference) are passed
+    to :func:`correlated_t_test`. ``test_fraction`` defaults to
+    ``1 / n_blocks`` (plain K-fold CV).
+
+    Each comparison carries a ``decision``: ``"best_better"`` /
+    ``"equivalent"`` / ``"other_better"`` when that posterior probability
+    reaches ``decision_threshold``, else ``"undecided"``. Returns ``None``
+    with fewer than two configurations or two shared blocks.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if not block_param:
+        raise ValueError("block_param is required")
+    if test_fraction is not None and not 0.0 < test_fraction < 1.0:
+        raise ValueError("test_fraction must be in (0, 1)")
+    if not rope >= 0.0:
+        raise ValueError("rope must be non-negative")
+    if not 0.5 < decision_threshold < 1.0:
+        raise ValueError("decision_threshold must be in (0.5, 1)")
+    ignored = set(ignore or ()) | {block_param}
+    keys = [k for k in group_by if k != block_param] if group_by else None
+    configs: Dict[str, dict] = {}
+    cells: Dict[str, Dict[str, List[float]]] = {}
+    block_labels: Dict[str, Any] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        params = flatten_params(view.get("params") or {})
+        if block_param not in params or params[block_param] is None:
+            continue
+        if keys is not None:
+            config = {k: params.get(k) for k in keys}
+        else:
+            config = {k: v for k, v in sorted(params.items()) if k not in ignored}
+        ckey = _hashable_param(config)
+        bkey = _hashable_param(params[block_param])
+        configs.setdefault(ckey, config)
+        block_labels.setdefault(bkey, params[block_param])
+        cells.setdefault(ckey, {}).setdefault(bkey, []).append(float(values[-1]))
+
+    if len(configs) < 2:
+        return None
+    config_keys = sorted(configs)
+    complete = sorted(b for b in block_labels if all(b in cells[c] for c in config_keys))
+    n_blocks = len(complete)
+    if n_blocks < 2:
+        return None
+    rho = test_fraction if test_fraction is not None else 1.0 / n_blocks
+    if rho >= 1.0:  # pragma: no cover - n_blocks >= 2 keeps rho <= 0.5
+        raise ValueError("test_fraction must be in (0, 1)")
+    table = {
+        c: [sum(cells[c][b]) / len(cells[c][b]) for b in complete] for c in config_keys
+    }
+    sign = 1.0 if maximize else -1.0
+    means = {c: sum(v) / n_blocks for c, v in table.items()}
+    best = sorted(config_keys, key=lambda c: (-sign * means[c], c))[0]
+    comparisons = []
+    for c in config_keys:
+        if c == best:
+            continue
+        diffs = [sign * (a - b) for a, b in zip(table[best], table[c])]
+        res = correlated_t_test(diffs, test_fraction=rho, rope=rope, confidence=confidence)
+        probs = {
+            "best_better": res["p_a_better"],
+            "equivalent": res["p_rope"],
+            "other_better": res["p_b_better"],
+        }
+        label, prob = max(probs.items(), key=lambda kv: kv[1])
+        comparisons.append(
+            {
+                "params": configs[c],
+                "mean": means[c],
+                "mean_difference": res["mean_difference"],
+                "ci_low": res["ci_low"],
+                "ci_high": res["ci_high"],
+                "t_statistic": res["t_statistic"],
+                "p_value": res["p_value"],
+                "naive_p_value": res["naive_p_value"],
+                "p_best_better": res["p_a_better"],
+                "p_equivalent": res["p_rope"],
+                "p_other_better": res["p_b_better"],
+                "decision": label if prob >= decision_threshold else "undecided",
+            }
+        )
+    comparisons.sort(key=lambda r: (-r["p_best_better"], -r["mean_difference"]))
+    return {
+        "metric": metric_name,
+        "block_param": block_param,
+        "maximize": maximize,
+        "n_blocks": n_blocks,
+        "blocks": [block_labels[b] for b in complete],
+        "dropped_blocks": [block_labels[b] for b in sorted(block_labels) if b not in complete],
+        "test_fraction": rho,
+        "rope": rope,
+        "confidence": confidence,
+        "decision_threshold": decision_threshold,
+        "best": {"params": configs[best], "mean": means[best]},
+        "comparisons": comparisons,
+    }
+
+
 def best_so_far_curve(
     runs: Sequence[Any],
     metric_name: str,

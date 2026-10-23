@@ -20,6 +20,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Best-so-far / simple-regret curves for sweep progress over time
 - Learning-curve extrapolation (pow3 / exp3 saturating fits) with predicted final metric, asymptote and early-termination hints for runs unlikely to beat the incumbent
 - Friedman rank test with Iman-Davenport F and Nemenyi critical difference for comparing configurations across matched seeds / datasets / folds
+- Corrected resampled t-test (Nadeau-Bengio) and Bayesian correlated t-test with a ROPE (Corani-Benavoli) for comparing configurations across shared CV folds
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start
@@ -204,6 +205,40 @@ curl "http://localhost:8000/experiments/$EXP/friedman?metric=accuracy&block_para
 ```
 
 `ExperimentTrackerClient.friedman_comparison(exp_id, "accuracy", block_param="dataset")`
+wraps the endpoint.
+
+## Bayesian comparison over CV folds
+
+Fold scores from one cross-validation share most of their training data, so
+the per-fold differences between two models are correlated and a plain paired
+t-test is overconfident. `cv_bayesian_comparison` (endpoint
+`/experiments/{id}/cv-bayesian`) matches configurations on `block_param`
+(default `fold`), takes the configuration with the best mean as the reference
+and, for each other configuration, runs on the per-fold differences:
+
+- the **corrected resampled t-test** (Nadeau & Bengio, 2003), variance
+  `(1/n + rho/(1-rho)) s^2` with `rho = test_fraction` (default `1/K`);
+- the **Bayesian correlated t-test** (Corani & Benavoli, 2015): a Student-t
+  posterior with the same scale, giving `p_best_better`, `p_equivalent`
+  (inside the region of practical equivalence `[-rope, rope]`) and
+  `p_other_better`, plus a `decision` once one of them reaches
+  `decision_threshold` (default 0.95).
+
+```python
+from src.models import correlated_t_test, cv_bayesian_comparison
+
+res = cv_bayesian_comparison(runs, "accuracy", block_param="fold", rope=0.01)
+for c in res["comparisons"]:
+    print(c["params"], c["mean_difference"], c["p_best_better"], c["p_equivalent"], c["decision"])
+
+correlated_t_test([0.01, 0.02, -0.004, 0.015, 0.009], test_fraction=0.2, rope=0.005)
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/cv-bayesian?metric=accuracy&rope=0.01"
+```
+
+`ExperimentTrackerClient.cv_bayesian_comparison(exp_id, "accuracy", rope=0.01)`
 wraps the endpoint.
 
 ## Learning-curve extrapolation

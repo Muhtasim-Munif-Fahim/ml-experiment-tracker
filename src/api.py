@@ -481,6 +481,47 @@ def experiment_friedman_comparison(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+
+@app.get("/experiments/{exp_id}/cv-bayesian")
+def experiment_cv_bayesian_comparison(
+    exp_id: str,
+    metric: str = Query(...),
+    block_param: str = "fold",
+    ignore: str = "fold,seed",
+    group_by: Optional[str] = None,
+    maximize: bool = True,
+    test_fraction: Optional[float] = Query(None, gt=0.0, lt=1.0),
+    rope: float = Query(0.01, ge=0.0),
+    confidence: float = Query(0.95, gt=0.0, lt=1.0),
+    decision_threshold: float = Query(0.95, gt=0.5, lt=1.0),
+):
+    """Corrected resampled t-test + Bayesian correlated t-test against the best configuration.
+
+    ``ignore`` and ``group_by`` are comma-separated parameter names. Returns
+    ``null`` when there are not enough configurations or shared folds.
+    """
+    ignore_keys = [name.strip() for name in ignore.split(",") if name.strip()]
+    group_keys = (
+        [name.strip() for name in group_by.split(",") if name.strip()] if group_by else None
+    )
+    try:
+        return storage.experiment_cv_bayesian_comparison(
+            exp_id,
+            metric,
+            block_param=block_param,
+            ignore=ignore_keys,
+            group_by=group_keys,
+            maximize=maximize,
+            test_fraction=test_fraction,
+            rope=rope,
+            confidence=confidence,
+            decision_threshold=decision_threshold,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 @app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
 def experiment_run_groups(
     exp_id: str,

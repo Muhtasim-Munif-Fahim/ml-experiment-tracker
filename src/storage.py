@@ -22,6 +22,7 @@ from .models import (
     Run,
     compare_run_records,
     friedman_comparison,
+    cv_bayesian_comparison,
     group_runs_by_params,
     metric_trend,
     parameter_importance,
@@ -1254,6 +1255,40 @@ class LocalStorageBackend:
             group_by=group_by,
             maximize=maximize,
             alpha=alpha,
+        )
+
+    def experiment_cv_bayesian_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        block_param: str = "fold",
+        ignore: Optional[Sequence[str]] = ("fold", "seed"),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        test_fraction: Optional[float] = None,
+        rope: float = 0.01,
+        confidence: float = 0.95,
+        decision_threshold: float = 0.95,
+    ) -> Optional[dict]:
+        """Corrected resampled t-test + Bayesian correlated t-test vs the best config.
+
+        Wraps :func:`src.models.cv_bayesian_comparison` over the experiment's
+        runs. Raises ``KeyError`` when the experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return cv_bayesian_comparison(
+            self.list_runs(exp_id),
+            metric_name,
+            block_param=block_param,
+            ignore=tuple(ignore or ()),
+            group_by=group_by,
+            maximize=maximize,
+            test_fraction=test_fraction,
+            rope=rope,
+            confidence=confidence,
+            decision_threshold=decision_threshold,
         )
 
     def experiment_metric_long(

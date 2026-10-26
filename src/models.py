@@ -1339,6 +1339,193 @@ def cv_bayesian_comparison(
     }
 
 
+def _stepped_history(run: Any, metric_name: str) -> List[tuple]:
+    """``(step, value)`` pairs of one metric, sorted by step (unstepped points dropped).
+
+    When a step was logged more than once the last value wins.
+    """
+    view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+    by_step: Dict[int, float] = {}
+    for metric in view.get("metrics", []) or []:
+        if metric.get("name") != metric_name:
+            continue
+        step, value = metric.get("step"), metric.get("value")
+        if step is None or value is None:
+            continue
+        value = float(value)
+        if math.isnan(value) or math.isinf(value):
+            continue
+        by_step[int(step)] = value
+    return sorted(by_step.items())
+
+
+def successive_halving_replay(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    maximize: bool = True,
+    eta: float = 3.0,
+    min_step: Optional[int] = None,
+    rungs: Optional[Sequence[int]] = None,
+) -> Optional[dict]:
+    """Replay finished runs under successive halving (SHA / ASHA's synchronous core).
+
+    "Would early stopping have killed my best run, and what would it have
+    saved?" -- answered from curves you already logged. Every run with a
+    stepped history of ``metric_name`` starts in the bracket. At each rung
+    step ``r`` (default ``min_step * eta**k`` below the longest run, with
+    ``min_step`` defaulting to the earliest logged step), the surviving runs
+    that reached ``r`` are ranked by their latest value at or before ``r``
+    and the top ``max(1, floor(n / eta))`` are promoted; the rest are stopped
+    at ``r``. Runs whose curve ends before a rung simply finish there.
+
+    Returns ``None`` with fewer than two runs that have stepped values.
+    Otherwise a mapping with:
+
+    * ``rungs`` -- per rung: ``step``, ``candidates``, ``promoted`` and
+      ``stopped`` run ids, the promotion ``cutoff`` value, and
+      ``spearman_with_final`` (rank correlation of the rung value with the
+      run's final value; low values mean the rung metric is a poor proxy).
+    * ``runs`` -- per run: ``final_value`` / ``final_step`` as logged,
+      ``stopped_at`` (rung step or ``None``) and ``steps_used`` under SHA.
+    * ``best_run_id`` / ``best_final_value`` -- the best final value
+      actually logged; ``best_run_survived`` and ``best_surviving_run_id``;
+      ``regret`` -- how much worse the best never-stopped run ended (>= 0).
+    * ``budget_full``, ``budget_used`` (sum of steps) and
+      ``budget_saved_fraction``.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if not eta > 1.0 or math.isinf(eta):
+        raise ValueError("eta must be a finite number greater than 1")
+    if min_step is not None and min_step < 1:
+        raise ValueError("min_step must be a positive integer")
+
+    histories: Dict[str, List[tuple]] = {}
+    names: Dict[str, str] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        history = _stepped_history(view, metric_name)
+        if history:
+            run_id = str(view.get("id"))
+            histories[run_id] = history
+            names[run_id] = str(view.get("name", ""))
+    if len(histories) < 2:
+        return None
+
+    max_step = max(h[-1][0] for h in histories.values())
+    if rungs is not None:
+        rung_steps = sorted({int(r) for r in rungs})
+        if not rung_steps or rung_steps[0] < 1:
+            raise ValueError("rungs must be positive steps")
+    else:
+        first = min_step if min_step is not None else max(1, min(h[0][0] for h in histories.values()))
+        rung_steps = []
+        k = 0
+        while True:
+            step = int(round(first * eta ** k))
+            if step >= max_step:
+                break
+            if not rung_steps or step > rung_steps[-1]:
+                rung_steps.append(step)
+            k += 1
+
+    def value_at(history: List[tuple], step: int) -> Optional[float]:
+        latest = None
+        for s, v in history:
+            if s > step:
+                break
+            latest = v
+        return latest
+
+    final = {rid: h[-1] for rid, h in histories.items()}
+    alive = set(histories)
+    stopped_at: Dict[str, Optional[int]] = {rid: None for rid in histories}
+    rung_rows: List[dict] = []
+    for step in rung_steps:
+        candidates = [
+            rid
+            for rid in sorted(alive)
+            if histories[rid][-1][0] >= step and value_at(histories[rid], step) is not None
+        ]
+        if not candidates:
+            continue
+        values = {rid: value_at(histories[rid], step) for rid in candidates}
+        order = sorted(
+            candidates,
+            key=lambda rid: (-values[rid] if maximize else values[rid], rid),
+        )
+        keep = max(1, int(math.floor(len(order) / eta + 1e-12)))
+        promoted, stopped = order[:keep], order[keep:]
+        for rid in stopped:
+            alive.discard(rid)
+            stopped_at[rid] = step
+        rho = None
+        if len(candidates) >= 3:
+            rho = spearman_correlation(
+                [values[rid] for rid in candidates], [final[rid][1] for rid in candidates]
+            )
+        rung_rows.append(
+            {
+                "step": step,
+                "candidates": len(candidates),
+                "promoted": promoted,
+                "stopped": stopped,
+                "cutoff": values[promoted[-1]],
+                "spearman_with_final": None if rho is None else round(rho, 6),
+            }
+        )
+
+    def better(a: float, b: float) -> bool:
+        return a > b if maximize else a < b
+
+    run_rows = []
+    budget_full = budget_used = 0
+    for rid in sorted(histories, key=lambda r: (stopped_at[r] is not None, r)):
+        final_step, final_value = final[rid]
+        used = final_step if stopped_at[rid] is None else min(final_step, stopped_at[rid])
+        budget_full += final_step
+        budget_used += used
+        run_rows.append(
+            {
+                "run_id": rid,
+                "name": names[rid],
+                "final_step": final_step,
+                "final_value": final_value,
+                "stopped_at": stopped_at[rid],
+                "steps_used": used,
+            }
+        )
+
+    best_id = None
+    for rid in sorted(histories):
+        if best_id is None or better(final[rid][1], final[best_id][1]):
+            best_id = rid
+    survivors = [rid for rid in sorted(histories) if stopped_at[rid] is None]
+    best_surviving = None
+    for rid in survivors:
+        if best_surviving is None or better(final[rid][1], final[best_surviving][1]):
+            best_surviving = rid
+    regret = abs(final[best_id][1] - final[best_surviving][1])
+    return {
+        "metric": metric_name,
+        "maximize": maximize,
+        "eta": eta,
+        "run_count": len(histories),
+        "rungs": rung_rows,
+        "runs": run_rows,
+        "survivors": survivors,
+        "best_run_id": best_id,
+        "best_final_value": final[best_id][1],
+        "best_run_survived": stopped_at[best_id] is None,
+        "best_surviving_run_id": best_surviving,
+        "regret": regret,
+        "budget_full": budget_full,
+        "budget_used": budget_used,
+        "budget_saved_fraction": round(1.0 - budget_used / budget_full, 6) if budget_full else 0.0,
+    }
+
+
 def best_so_far_curve(
     runs: Sequence[Any],
     metric_name: str,

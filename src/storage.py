@@ -1170,6 +1170,34 @@ class LocalStorageBackend:
             maximize=maximize,
         )
 
+    def experiment_successive_halving(
+        self,
+        experiment_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+        eta: float = 3.0,
+        min_step: Optional[int] = None,
+        rungs: Optional[Sequence[int]] = None,
+    ) -> Optional[dict]:
+        """Replay the experiment's runs under successive halving.
+
+        Wraps :func:`src.models.successive_halving_replay`. Raises
+        ``KeyError`` when the experiment does not exist.
+        """
+        from .models import successive_halving_replay
+
+        if self.load_experiment(experiment_id) is None:
+            raise KeyError(f"experiment not found: {experiment_id}")
+        return successive_halving_replay(
+            self.list_runs(experiment_id),
+            metric_name,
+            maximize=maximize,
+            eta=eta,
+            min_step=min_step,
+            rungs=rungs,
+        )
+
     def experiment_learning_curve_forecast(
         self,
         experiment_id: str,

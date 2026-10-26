@@ -431,6 +431,37 @@ def experiment_learning_curve_forecast(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/experiments/{exp_id}/successive-halving")
+def experiment_successive_halving(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+    eta: float = Query(3.0, gt=1.0),
+    min_step: Optional[int] = Query(None, ge=1),
+    rungs: Optional[str] = None,
+):
+    """Replay logged curves under successive halving: who would be stopped, and the cost.
+
+    ``rungs`` is an optional comma-separated list of steps; by default rungs
+    are ``min_step * eta**k``. Returns ``null`` with fewer than two runs
+    that logged ``metric`` with steps.
+    """
+    rung_steps = None
+    if rungs:
+        try:
+            rung_steps = [int(item) for item in rungs.split(",") if item.strip()]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="rungs must be integers") from exc
+    try:
+        return storage.experiment_successive_halving(
+            exp_id, metric, maximize=maximize, eta=eta, min_step=min_step, rungs=rung_steps
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/best-so-far", response_model=dict)
 def experiment_best_so_far(
     exp_id: str,

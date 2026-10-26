@@ -323,6 +323,23 @@ class ExperimentTrackerClient:
             params={"metric": metric_name, "maximize": maximize},
         )
 
+    def successive_halving(
+        self,
+        exp_id: str,
+        metric_name: str,
+        maximize: bool = True,
+        eta: float = 3.0,
+        min_step: Optional[int] = None,
+        rungs: Optional[Sequence[int]] = None,
+    ) -> Optional[dict]:
+        """Replay the experiment's logged curves under successive halving."""
+        params = {"metric": metric_name, "maximize": maximize, "eta": eta}
+        if min_step is not None:
+            params["min_step"] = min_step
+        if rungs:
+            params["rungs"] = ",".join(str(int(r)) for r in rungs)
+        return self._request("GET", f"/experiments/{exp_id}/successive-halving", params=params)
+
 
     def run_groups(
         self,

@@ -19,6 +19,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
 - Best-so-far / simple-regret curves for sweep progress over time
 - Learning-curve extrapolation (pow3 / exp3 saturating fits) with predicted final metric, asymptote and early-termination hints for runs unlikely to beat the incumbent
+- Successive-halving replay of logged curves: which runs SHA/ASHA would stop at each rung, the compute saved, and whether the best run would have survived
 - Friedman rank test with Iman-Davenport F and Nemenyi critical difference for comparing configurations across matched seeds / datasets / folds
 - Corrected resampled t-test (Nadeau-Bengio) and Bayesian correlated t-test with a ROPE (Corani-Benavoli) for comparing configurations across shared CV folds
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
@@ -267,6 +268,37 @@ curl "http://localhost:8000/experiments/$EXP/learning-curve-forecast?metric=val_
 ```
 
 `ExperimentTrackerClient.learning_curve_forecast(exp_id, "val_accuracy", 50)` wraps the endpoint.
+
+## Successive-halving replay
+
+Before you switch a sweep to successive halving or ASHA, check what it would
+have done to the curves you already logged.
+`successive_halving_replay(runs, metric, eta=3, maximize=True)` puts every run
+with a stepped history into one bracket. Rungs default to `min_step * eta**k`
+below the longest run (`min_step` defaults to the earliest logged step), or you
+can pass explicit `rungs=[...]`. At each rung, the surviving runs that reached
+it are ranked by their latest value at or before that step. The top
+`max(1, floor(n / eta))` are promoted and the rest are stopped there.
+
+The result lists, for each rung, the promoted and stopped runs, the cutoff, and
+`spearman_with_final`, which shows how well the rung metric predicts the final
+one. It also reports `steps_used` per run and `budget_saved_fraction`. The key
+safety check is `best_run_survived`, plus the `regret` paid when a late bloomer
+gets killed early.
+
+```python
+from src.models import successive_halving_replay
+
+replay = successive_halving_replay(runs, "val_accuracy", eta=3)
+replay["budget_saved_fraction"], replay["best_run_survived"], replay["regret"]
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/successive-halving?metric=val_accuracy&eta=3"
+curl "http://localhost:8000/experiments/$EXP/successive-halving?metric=val_loss&maximize=false&rungs=5,15,45"
+```
+
+`ExperimentTrackerClient.successive_halving(exp_id, "val_accuracy", eta=3)` wraps the endpoint.
 
 ## Hyperparameter importance
 

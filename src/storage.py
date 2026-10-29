@@ -23,6 +23,7 @@ from .models import (
     compare_run_records,
     friedman_comparison,
     cv_bayesian_comparison,
+    effect_size_comparison,
     group_runs_by_params,
     metric_trend,
     parameter_importance,
@@ -1317,6 +1318,38 @@ class LocalStorageBackend:
             rope=rope,
             confidence=confidence,
             decision_threshold=decision_threshold,
+        )
+
+    def experiment_effect_size_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        ignore: Optional[Sequence[str]] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        n_bootstrap: int = 2000,
+        confidence: float = 0.95,
+        seed: Optional[int] = 0,
+        alpha: float = 0.05,
+    ) -> Optional[dict]:
+        """Vargha-Delaney A12 / Cliff's delta / Mann-Whitney U of each config vs the best.
+
+        Wraps :func:`src.models.effect_size_comparison` over the experiment's
+        runs. Raises ``KeyError`` when the experiment does not exist.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        return effect_size_comparison(
+            self.list_runs(exp_id),
+            metric_name,
+            ignore=tuple(ignore or ()),
+            group_by=group_by,
+            maximize=maximize,
+            n_bootstrap=n_bootstrap,
+            confidence=confidence,
+            seed=seed,
+            alpha=alpha,
         )
 
     def experiment_metric_long(

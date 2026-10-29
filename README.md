@@ -22,6 +22,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Successive-halving replay of logged curves: which runs SHA/ASHA would stop at each rung, the compute saved, and whether the best run would have survived
 - Friedman rank test with Iman-Davenport F and Nemenyi critical difference for comparing configurations across matched seeds / datasets / folds
 - Corrected resampled t-test (Nadeau-Bengio) and Bayesian correlated t-test with a ROPE (Corani-Benavoli) for comparing configurations across shared CV folds
+- Rank-based effect sizes over independent seeds: Vargha-Delaney A12, Cliff's delta with magnitude labels, Hodges-Lehmann shift, bootstrap CI and exact / tie-corrected Mann-Whitney U against the best configuration
 - ANOVA hyperparameter importance (eta² / omega², F-test p-value, Spearman) for categorical and numeric params
 
 ## Quick Start
@@ -241,6 +242,42 @@ curl "http://localhost:8000/experiments/$EXP/cv-bayesian?metric=accuracy&rope=0.
 
 `ExperimentTrackerClient.cv_bayesian_comparison(exp_id, "accuracy", rope=0.01)`
 wraps the endpoint.
+
+## Effect sizes over independent seeds
+
+When each configuration was simply re-run with a few random seeds (unmatched
+samples), `effect_size_comparison` (endpoint `/experiments/{id}/effect-sizes`)
+reports *how much* better the best configuration is, not just a p-value
+(Arcuri & Briand, 2011). Configurations are grouped as in `run-groups`
+(params minus `ignore`, default `seed`). The one with the best median is the
+reference, and every other configuration gets:
+
+- **Vargha-Delaney A12**: the probability that a random run of the best beats
+  a random run of the other (0.5 = no difference), with a percentile
+  **bootstrap CI** (`n_bootstrap`, reproducible via `seed`);
+- **Cliff's delta** `2 A12 - 1`, with Romano et al. (2006) magnitude labels
+  (`negligible` / `small` / `medium` / `large`);
+- the **Hodges-Lehmann** shift (median pairwise difference, in metric units);
+- the two-sided **Mann-Whitney U** test: exact permutation p-value without
+  ties and up to 20 runs per side, otherwise the tie-corrected normal
+  approximation with continuity correction (both match `scipy.stats.mannwhitneyu`).
+
+```python
+from src.models import effect_size_comparison, mann_whitney_effect_size
+
+res = effect_size_comparison(runs, "accuracy", ignore=["seed"], n_bootstrap=2000)
+for c in res["comparisons"]:
+    print(c["params"], c["a12"], (c["a12_ci_low"], c["a12_ci_high"]), c["magnitude"], c["p_value"])
+
+mann_whitney_effect_size([0.91, 0.93, 0.90], [0.88, 0.89, 0.87])
+```
+
+```bash
+curl "http://localhost:8000/experiments/$EXP/effect-sizes?metric=loss&maximize=false"
+```
+
+`ExperimentTrackerClient.effect_size_comparison(exp_id, "accuracy")` wraps the
+endpoint.
 
 ## Learning-curve extrapolation
 

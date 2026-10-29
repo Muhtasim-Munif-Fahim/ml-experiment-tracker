@@ -553,6 +553,46 @@ def experiment_cv_bayesian_comparison(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+@app.get("/experiments/{exp_id}/effect-sizes")
+def experiment_effect_size_comparison(
+    exp_id: str,
+    metric: str = Query(...),
+    ignore: str = "seed",
+    group_by: Optional[str] = None,
+    maximize: bool = True,
+    n_bootstrap: int = Query(2000, ge=0, le=100_000),
+    confidence: float = Query(0.95, gt=0.0, lt=1.0),
+    seed: Optional[int] = 0,
+    alpha: float = Query(0.05, gt=0.0, lt=1.0),
+):
+    """Vargha-Delaney A12, Cliff's delta and Mann-Whitney U of each configuration vs the best.
+
+    Runs are independent samples (e.g. one per seed); ``ignore`` and
+    ``group_by`` are comma-separated parameter names. Returns ``null`` with
+    fewer than two configurations.
+    """
+    ignore_keys = [name.strip() for name in ignore.split(",") if name.strip()]
+    group_keys = (
+        [name.strip() for name in group_by.split(",") if name.strip()] if group_by else None
+    )
+    try:
+        return storage.experiment_effect_size_comparison(
+            exp_id,
+            metric,
+            ignore=ignore_keys,
+            group_by=group_keys,
+            maximize=maximize,
+            n_bootstrap=n_bootstrap,
+            confidence=confidence,
+            seed=seed,
+            alpha=alpha,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/run-groups", response_model=List[dict])
 def experiment_run_groups(
     exp_id: str,

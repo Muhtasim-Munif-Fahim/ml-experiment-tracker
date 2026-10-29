@@ -412,6 +412,33 @@ class ExperimentTrackerClient:
             params["test_fraction"] = test_fraction
         return self._request("GET", f"/experiments/{exp_id}/cv-bayesian", params=params)
 
+    def effect_size_comparison(
+        self,
+        exp_id: str,
+        metric_name: str,
+        ignore: Sequence[str] = ("seed",),
+        group_by: Optional[Sequence[str]] = None,
+        maximize: bool = True,
+        n_bootstrap: int = 2000,
+        confidence: float = 0.95,
+        seed: Optional[int] = 0,
+        alpha: float = 0.05,
+    ) -> Optional[dict]:
+        """Vargha-Delaney A12 / Cliff's delta / Mann-Whitney U of each config vs the best."""
+        params = {
+            "metric": metric_name,
+            "ignore": ",".join(ignore or ()),
+            "maximize": maximize,
+            "n_bootstrap": n_bootstrap,
+            "confidence": confidence,
+            "alpha": alpha,
+        }
+        if group_by:
+            params["group_by"] = ",".join(group_by)
+        if seed is not None:
+            params["seed"] = seed
+        return self._request("GET", f"/experiments/{exp_id}/effect-sizes", params=params)
+
     def metric_baseline(self, exp_id: str, metric_name: str) -> dict:
         """Fetch experiment-wide descriptive statistics for one metric."""
         return self._request(

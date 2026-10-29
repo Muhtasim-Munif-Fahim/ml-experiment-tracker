@@ -1339,6 +1339,269 @@ def cv_bayesian_comparison(
     }
 
 
+def _mann_whitney_exact_sf(u: float, n1: int, n2: int) -> float:
+    """``P(U >= u)`` under H0 for untied samples (exact permutation distribution)."""
+    # counts[j] = number of arrangements with U == j, built up one sample at a time
+    max_u = n1 * n2
+    # f[m][k] for m in 0..n1 using the recurrence f(m, n, u) = f(m-1, n, u-n) + f(m, n-1, u)
+    prev = [[1] + [0] * max_u for _ in range(n1 + 1)]  # n = 0: only U = 0
+    for n in range(1, n2 + 1):
+        cur = [[1] + [0] * max_u]
+        for m in range(1, n1 + 1):
+            row = list(prev[m])
+            left = cur[m - 1]
+            for j in range(n, max_u + 1):
+                row[j] += left[j - n]
+            cur.append(row)
+        prev = cur
+    counts = prev[n1]
+    total = math.comb(n1 + n2, n1)
+    start = max(0, math.ceil(u - 1e-9))
+    return min(1.0, sum(counts[start:]) / total)
+
+
+def mann_whitney_effect_size(
+    a: Sequence[float],
+    b: Sequence[float],
+    *,
+    n_bootstrap: int = 2000,
+    confidence: float = 0.95,
+    seed: Optional[int] = 0,
+    method: str = "auto",
+) -> dict:
+    """Non-parametric effect sizes and Mann-Whitney U test for two independent samples.
+
+    Designed for comparing two configurations over *independent* seeds, where
+    a mean difference with a t-test is fragile (few runs, skewed scores).
+
+    * ``a12``: Vargha & Delaney's (2000) ``A = P(X_a > X_b) + 0.5 P(X_a = X_b)``,
+      the probability that a random run of ``a`` beats a random run of ``b``;
+    * ``cliffs_delta``: ``2 A - 1`` in ``[-1, 1]``, with the Romano et al.
+      (2006) ``magnitude`` label (``negligible`` < 0.147 <= ``small`` < 0.33 <=
+      ``medium`` < 0.474 <= ``large``);
+    * ``u_statistic`` / ``p_value``: the two-sided Mann-Whitney U test.
+      ``method="exact"`` uses the permutation distribution (only without
+      ties), ``"asymptotic"`` the tie-corrected normal approximation with a
+      continuity correction (as ``scipy.stats.mannwhitneyu``), ``"auto"``
+      exact when there are no ties and both samples have at most 20 values;
+    * ``hodges_lehmann``: the median of all pairwise differences ``x_a - x_b``,
+      a robust estimate of the location shift;
+    * ``a12_ci_low`` / ``a12_ci_high``: a percentile bootstrap interval
+      (each sample resampled independently; ``n_bootstrap=0`` disables it).
+    """
+    xa = [float(v) for v in a]
+    xb = [float(v) for v in b]
+    n1, n2 = len(xa), len(xb)
+    if n1 < 1 or n2 < 1:
+        raise ValueError("both samples need at least one value")
+    if any(math.isnan(v) or math.isinf(v) for v in xa + xb):
+        raise ValueError("values must be finite")
+    if isinstance(n_bootstrap, bool) or not isinstance(n_bootstrap, int) or n_bootstrap < 0:
+        raise ValueError("n_bootstrap must be a non-negative integer")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be in (0, 1)")
+    if method not in ("auto", "exact", "asymptotic"):
+        raise ValueError("method must be 'auto', 'exact' or 'asymptotic'")
+
+    def a12_of(sa: Sequence[float], sb: Sequence[float]) -> float:
+        # O((n1 + n2) log(n1 + n2)) via ranks of the pooled sample
+        pooled = list(sa) + list(sb)
+        ranks = _average_ranks(pooled)
+        r1 = sum(ranks[: len(sa)])
+        return (r1 - len(sa) * (len(sa) + 1) / 2.0) / (len(sa) * len(sb))
+
+    pooled = xa + xb
+    ranks = _average_ranks(pooled)
+    r1 = sum(ranks[:n1])
+    u1 = r1 - n1 * (n1 + 1) / 2.0
+    a12 = u1 / (n1 * n2)
+    delta = 2.0 * a12 - 1.0
+    counts: Dict[float, int] = {}
+    for v in pooled:
+        counts[v] = counts.get(v, 0) + 1
+    tie_term = sum(t ** 3 - t for t in counts.values())
+    has_ties = tie_term > 0
+    if method == "exact" and has_ties:
+        raise ValueError("the exact test requires samples without ties")
+    use_exact = method == "exact" or (method == "auto" and not has_ties and max(n1, n2) <= 20)
+    mean_u = n1 * n2 / 2.0
+    if use_exact:
+        u_big = max(u1, n1 * n2 - u1)
+        p_value = min(1.0, 2.0 * _mann_whitney_exact_sf(u_big, n1, n2))
+        z = None
+    else:
+        n = n1 + n2
+        var_u = n1 * n2 / 12.0 * ((n + 1) - tie_term / (n * (n - 1))) if n > 1 else 0.0
+        if var_u <= 0.0:
+            z, p_value = 0.0, 1.0
+        else:
+            dev = abs(u1 - mean_u) - 0.5
+            z = max(dev, 0.0) / math.sqrt(var_u)
+            p_value = min(1.0, 2.0 * (1.0 - _normal_cdf(z)))
+            z = math.copysign(z, u1 - mean_u) if u1 != mean_u else 0.0
+
+    diffs = sorted(x - y for x in xa for y in xb)
+    m = len(diffs)
+    hl = diffs[m // 2] if m % 2 else 0.5 * (diffs[m // 2 - 1] + diffs[m // 2])
+
+    ci_low = ci_high = None
+    if n_bootstrap > 0:
+        import random
+
+        rng = random.Random(seed)
+        stats = sorted(
+            a12_of([rng.choice(xa) for _ in range(n1)], [rng.choice(xb) for _ in range(n2)])
+            for _ in range(n_bootstrap)
+        )
+        tail = (1.0 - confidence) / 2.0
+
+        def quantile(q: float) -> float:
+            pos = q * (n_bootstrap - 1)
+            lo = int(math.floor(pos))
+            hi = min(lo + 1, n_bootstrap - 1)
+            return stats[lo] + (stats[hi] - stats[lo]) * (pos - lo)
+
+        ci_low, ci_high = quantile(tail), quantile(1.0 - tail)
+
+    size = abs(delta)
+    magnitude = (
+        "negligible" if size < 0.147 else "small" if size < 0.33 else "medium" if size < 0.474 else "large"
+    )
+    return {
+        "n_a": n1,
+        "n_b": n2,
+        "a12": a12,
+        "cliffs_delta": delta,
+        "magnitude": magnitude,
+        "u_statistic": u1,
+        "z": z,
+        "p_value": p_value,
+        "method": "exact" if use_exact else "asymptotic",
+        "ties": has_ties,
+        "hodges_lehmann": hl,
+        "median_a": _median_of(xa),
+        "median_b": _median_of(xb),
+        "confidence": confidence,
+        "n_bootstrap": n_bootstrap,
+        "a12_ci_low": ci_low,
+        "a12_ci_high": ci_high,
+    }
+
+
+def _median_of(values: Sequence[float]) -> float:
+    s = sorted(values)
+    n = len(s)
+    return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
+
+
+def effect_size_comparison(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    ignore: Sequence[str] = ("seed",),
+    group_by: Optional[Sequence[str]] = None,
+    maximize: bool = True,
+    n_bootstrap: int = 2000,
+    confidence: float = 0.95,
+    seed: Optional[int] = 0,
+    alpha: float = 0.05,
+) -> Optional[dict]:
+    """Compare every configuration to the best one with rank-based effect sizes.
+
+    Unlike :func:`friedman_comparison` / :func:`cv_bayesian_comparison`, the
+    runs need not be matched: each configuration (params minus ``ignore``,
+    or exactly ``group_by``) contributes the latest ``metric_name`` of each
+    of its runs as an independent sample, e.g. one value per random seed.
+    The configuration with the highest median (lowest when
+    ``maximize=False``; ties broken by mean) is the reference, and each other
+    one is compared to it with :func:`mann_whitney_effect_size` so that
+    ``a12 > 0.5`` / ``cliffs_delta > 0`` always means *the best is better*.
+
+    Each comparison carries ``significant`` (``p_value < alpha``) and the
+    Hodges-Lehmann shift in the metric's own units (positive favours the
+    best). Returns ``None`` when fewer than two configurations have values.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be in (0, 1)")
+    if isinstance(n_bootstrap, bool) or not isinstance(n_bootstrap, int) or n_bootstrap < 0:
+        raise ValueError("n_bootstrap must be a non-negative integer")
+    ignored = set(ignore or ())
+    keys = list(group_by) if group_by else None
+    configs: Dict[str, dict] = {}
+    samples: Dict[str, List[float]] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        if not values:
+            continue
+        value = float(values[-1])
+        if math.isnan(value) or math.isinf(value):
+            continue
+        params = flatten_params(view.get("params") or {})
+        if keys is not None:
+            config = {k: params.get(k) for k in keys}
+        else:
+            config = {k: v for k, v in sorted(params.items()) if k not in ignored}
+        ckey = _hashable_param(config)
+        configs.setdefault(ckey, config)
+        samples.setdefault(ckey, []).append(value)
+    if len(configs) < 2:
+        return None
+    sign = 1.0 if maximize else -1.0
+    stats = {
+        c: {"median": _median_of(v), "mean": sum(v) / len(v), "n": len(v)} for c, v in samples.items()
+    }
+    best = sorted(configs, key=lambda c: (-sign * stats[c]["median"], -sign * stats[c]["mean"], c))[0]
+    best_values = [sign * v for v in samples[best]]
+    comparisons = []
+    for c in sorted(configs):
+        if c == best:
+            continue
+        res = mann_whitney_effect_size(
+            best_values,
+            [sign * v for v in samples[c]],
+            n_bootstrap=n_bootstrap,
+            confidence=confidence,
+            seed=seed,
+        )
+        comparisons.append(
+            {
+                "params": configs[c],
+                "n": stats[c]["n"],
+                "median": stats[c]["median"],
+                "mean": stats[c]["mean"],
+                "a12": res["a12"],
+                "a12_ci_low": res["a12_ci_low"],
+                "a12_ci_high": res["a12_ci_high"],
+                "cliffs_delta": res["cliffs_delta"],
+                "magnitude": res["magnitude"],
+                "hodges_lehmann": res["hodges_lehmann"],
+                "u_statistic": res["u_statistic"],
+                "p_value": res["p_value"],
+                "test_method": res["method"],
+                "significant": res["p_value"] < alpha,
+            }
+        )
+    comparisons.sort(key=lambda r: (-r["a12"], r["p_value"]))
+    return {
+        "metric": metric_name,
+        "maximize": maximize,
+        "alpha": alpha,
+        "confidence": confidence,
+        "n_bootstrap": n_bootstrap,
+        "best": {"params": configs[best], **stats[best]},
+        "comparisons": comparisons,
+    }
+
+
 def _stepped_history(run: Any, metric_name: str) -> List[tuple]:
     """``(step, value)`` pairs of one metric, sorted by step (unstepped points dropped).
 

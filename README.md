@@ -370,6 +370,22 @@ curl "http://localhost:8000/experiments/$EXP/parameter-importance?metric=accurac
 
 `ExperimentTrackerClient.parameter_importance(exp_id, "accuracy")` wraps the endpoint.
 
+## Training instability: spikes, NaN/inf and divergence
+
+`detect_metric_instability` scans a metric curve for **loss spikes** (deviation in the bad direction from the median of the previous `window` values larger than `spike_threshold` robust standard deviations, `1.4826 * MAD`), **non-finite values** (NaN / inf) and **divergence** (the curve ends non-finite, or improved and then ended worse than its first value). Each run gets a `status` of `diverged`, `unstable` or `stable`.
+
+```python
+from src.models import detect_metric_instability
+
+detect_metric_instability([2.0, 1.6, 1.3, 1.1, 1.0, 9.0, 0.95])["spikes"]
+# [{'index': 5, 'step': 5, 'value': 9.0, 'baseline': 1.3, 'robust_z': ...}]
+```
+
+```
+GET /runs/{id}/instability?metric=loss&window=5&spike_threshold=6
+GET /experiments/{id}/instability?metric=val_accuracy&maximize=true   # runs ranked diverged > unstable > stable
+```
+
 ## Project Structure
 
 ```

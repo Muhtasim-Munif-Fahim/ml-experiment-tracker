@@ -1860,6 +1860,91 @@ class LocalStorageBackend:
             "stopped_at_step": stopped_at_step,
         }
 
+    def run_metric_instability(
+        self,
+        run_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = False,
+        window: int = 5,
+        spike_threshold: float = 6.0,
+    ) -> dict:
+        """Detect loss spikes, NaN/inf values and divergence in one run's metric.
+
+        See :func:`src.models.detect_metric_instability`. Observations are
+        ordered by step. Raises ``KeyError`` for an unknown run and
+        ``ValueError`` when the metric has no recorded values.
+        """
+        from .models import detect_metric_instability
+
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        series = [
+            metric
+            for metric in run.get("metrics", [])
+            if metric.get("name") == metric_name and metric.get("value") is not None
+        ]
+        if not series:
+            raise ValueError(f"no recorded values for metric: {metric_name}")
+        series.sort(key=lambda metric: (metric.get("step") is None, metric.get("step")))
+        result = detect_metric_instability(
+            [metric["value"] for metric in series],
+            [metric.get("step") for metric in series],
+            maximize=maximize,
+            window=window,
+            spike_threshold=spike_threshold,
+        )
+        result["run_id"] = run_id
+        result["metric_name"] = metric_name
+        return result
+
+    def experiment_instability_report(
+        self,
+        exp_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = False,
+        window: int = 5,
+        spike_threshold: float = 6.0,
+    ) -> List[dict]:
+        """Instability summary for every run in an experiment that logged ``metric_name``.
+
+        Rows are ordered diverged first, then unstable, then stable, and by
+        spike count within a status. Raises ``KeyError`` for an unknown
+        experiment.
+        """
+        if self.load_experiment(exp_id) is None:
+            raise KeyError(f"experiment not found: {exp_id}")
+        rows = []
+        for run in self.list_runs(exp_id):
+            if not any(m.get("name") == metric_name for m in run.get("metrics", [])):
+                continue
+            result = self.run_metric_instability(
+                run["id"],
+                metric_name,
+                maximize=maximize,
+                window=window,
+                spike_threshold=spike_threshold,
+            )
+            rows.append(
+                {
+                    "run_id": run["id"],
+                    "run_name": run.get("name"),
+                    "status": result["status"],
+                    "diverged": result["diverged"],
+                    "n_spikes": result["n_spikes"],
+                    "n_non_finite": len(result["non_finite_indices"]),
+                    "first_spike_step": result["spikes"][0]["step"] if result["spikes"] else None,
+                    "first_non_finite_step": result["first_non_finite_step"],
+                    "best_value": result["best_value"],
+                    "final_value": result["final_value"],
+                }
+            )
+        order = {"diverged": 0, "unstable": 1, "stable": 2}
+        rows.sort(key=lambda r: (order[r["status"]], -r["n_spikes"], -r["n_non_finite"]))
+        return rows
+
     def experiment_pareto_front(
         self,
         exp_id: str,

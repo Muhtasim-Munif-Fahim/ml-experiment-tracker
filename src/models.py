@@ -2997,3 +2997,102 @@ def write_run_comparison_report(
         target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     return str(target)
+
+
+def _finite_or_none(value: float) -> Optional[float]:
+    return float(value) if math.isfinite(value) else None
+
+
+def detect_metric_instability(
+    values: Sequence[float],
+    steps: Optional[Sequence[Any]] = None,
+    *,
+    maximize: bool = False,
+    window: int = 5,
+    spike_threshold: float = 6.0,
+) -> Dict[str, Any]:
+    """Flag training instability in a metric curve: spikes, NaN/inf, divergence.
+
+    * **Spikes**: an observation whose deviation in the *bad* direction (up
+      for a minimised loss, down for a maximised score) from the median of
+      the previous ``window`` finite values exceeds ``spike_threshold``
+      robust standard deviations. The scale is ``1.4826 * MAD`` of that
+      window, floored at ``1e-3 * |median|`` (and ``1e-12``) so flat
+      plateaus do not turn every wiggle into a spike.
+    * **Non-finite** values (NaN / +-inf), the classic exploded-loss symptom.
+    * **Divergence**: the curve's last value is non-finite, or the run had
+      improved on its first value and then ended *worse* than it started.
+
+    Returns ``n_points``, ``spikes`` (``index``, ``step``, ``value``,
+    ``baseline``, ``robust_z``), ``n_spikes``, ``non_finite_indices``,
+    ``first_non_finite_step``, ``first_value``, ``best_value``,
+    ``final_value``, ``diverged`` and ``status`` (``"diverged"``,
+    ``"unstable"`` when there are spikes or non-finite values, else
+    ``"stable"``).
+    """
+    if window < 2:
+        raise ValueError("window must be at least 2")
+    if spike_threshold <= 0:
+        raise ValueError("spike_threshold must be positive")
+    vals = [float(v) for v in values]
+    if not vals:
+        raise ValueError("values must be non-empty")
+    if steps is None:
+        steps = list(range(len(vals)))
+    elif len(steps) != len(vals):
+        raise ValueError("steps and values must have the same length")
+    sign = -1.0 if maximize else 1.0  # positive deviation = getting worse
+
+    spikes: List[Dict[str, Any]] = []
+    non_finite: List[int] = []
+    history: List[float] = []
+    for index, value in enumerate(vals):
+        if not math.isfinite(value):
+            non_finite.append(index)
+            continue
+        if len(history) >= 2:
+            recent = history[-window:]
+            baseline = _median_of(recent)
+            mad = _median_of([abs(v - baseline) for v in recent])
+            scale = max(1.4826 * mad, 1e-3 * abs(baseline), 1e-12)
+            z = sign * (value - baseline) / scale
+            if z > spike_threshold:
+                spikes.append(
+                    {
+                        "index": index,
+                        "step": steps[index],
+                        "value": value,
+                        "baseline": baseline,
+                        "robust_z": z,
+                    }
+                )
+        history.append(value)
+
+    finite = [v for v in vals if math.isfinite(v)]
+    first = finite[0] if finite else float("nan")
+    best = (max(finite) if maximize else min(finite)) if finite else float("nan")
+    final = vals[-1]
+    if not math.isfinite(final):
+        diverged = True
+    elif finite:
+        improved = (best > first) if maximize else (best < first)
+        worse_than_start = (final < first) if maximize else (final > first)
+        diverged = improved and worse_than_start
+    else:
+        diverged = True
+    status = "diverged" if diverged else ("unstable" if spikes or non_finite else "stable")
+    return {
+        "maximize": maximize,
+        "window": window,
+        "spike_threshold": spike_threshold,
+        "n_points": len(vals),
+        "spikes": spikes,
+        "n_spikes": len(spikes),
+        "non_finite_indices": non_finite,
+        "first_non_finite_step": steps[non_finite[0]] if non_finite else None,
+        "first_value": _finite_or_none(first),
+        "best_value": _finite_or_none(best),
+        "final_value": _finite_or_none(final),
+        "diverged": diverged,
+        "status": status,
+    }

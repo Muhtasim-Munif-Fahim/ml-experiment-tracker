@@ -1372,6 +1372,42 @@ def run_early_stopping_point(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/runs/{run_id}/instability", response_model=dict)
+def run_metric_instability(
+    run_id: str,
+    metric: str = Query(...),
+    maximize: bool = False,
+    window: int = Query(5, ge=2),
+    spike_threshold: float = Query(6.0, gt=0.0),
+):
+    """Detect loss spikes, NaN/inf values and divergence in a run's metric curve."""
+    try:
+        return storage.run_metric_instability(
+            run_id, metric, maximize=maximize, window=window, spike_threshold=spike_threshold
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/experiments/{exp_id}/instability", response_model=List[dict])
+def experiment_instability_report(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = False,
+    window: int = Query(5, ge=2),
+    spike_threshold: float = Query(6.0, gt=0.0),
+):
+    """Rank an experiment's runs by training instability on one metric."""
+    try:
+        return storage.experiment_instability_report(
+            exp_id, metric, maximize=maximize, window=window, spike_threshold=spike_threshold
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/experiments/{exp_id}/pareto", response_model=List[dict])
 def experiment_pareto_front(
     exp_id: str,

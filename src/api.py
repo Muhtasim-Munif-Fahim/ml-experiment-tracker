@@ -1391,6 +1391,26 @@ def run_metric_instability(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/runs/{run_id}/overfitting", response_model=dict)
+def run_overfitting_report(
+    run_id: str,
+    train_metric: str = Query(...),
+    val_metric: str = Query(...),
+    maximize: bool = False,
+    patience: int = Query(3, ge=1),
+    min_delta: float = Query(0.0, ge=0.0),
+):
+    """Generalization gap and the step where validation starts to degrade."""
+    try:
+        return storage.run_overfitting_report(
+            run_id, train_metric, val_metric, maximize=maximize, patience=patience, min_delta=min_delta
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/instability", response_model=List[dict])
 def experiment_instability_report(
     exp_id: str,

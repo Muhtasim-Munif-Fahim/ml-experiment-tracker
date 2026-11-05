@@ -3096,3 +3096,119 @@ def detect_metric_instability(
         "diverged": diverged,
         "status": status,
     }
+
+
+def detect_overfitting(
+    train_values: Sequence[float],
+    val_values: Sequence[float],
+    *,
+    train_steps: Optional[Sequence[Any]] = None,
+    val_steps: Optional[Sequence[Any]] = None,
+    maximize: bool = False,
+    patience: int = 3,
+    min_delta: float = 0.0,
+) -> Dict[str, Any]:
+    """Locate the onset of overfitting from paired train / validation curves.
+
+    Each validation point is paired with the most recent training value
+    logged at or before its step (training metrics are usually logged more
+    often). Points without a preceding training value, and non-finite
+    values, are dropped. The *generalization gap* is ``val - train`` for a
+    minimised metric and ``train - val`` for a maximised one, so a positive
+    gap always means validation is worse than training.
+
+    The best validation point is the first one that no later point beats by
+    more than ``min_delta``. Overfitting starts at the first point after it
+    that begins a run of ``patience`` consecutive validation points worse
+    than the best by more than ``min_delta`` while the training metric keeps
+    improving (better at the end of the run than at the best point). This is
+    the classic early-stopping signal (Prechelt, "Early Stopping - But
+    When?", 1998), reported after the fact.
+
+    Returns ``n_points``, the aligned ``points`` (``step``, ``train``,
+    ``val``, ``gap``), ``best_val_step``, ``best_val``, ``train_at_best``,
+    ``gap_at_best``, ``final_gap``, ``gap_growth`` (``final_gap -
+    gap_at_best``), ``overfit_onset_step``, ``points_after_best`` and
+    ``status``: ``"overfitting"`` when an onset was found, ``"stalled"``
+    when validation never improved on its first value, else ``"ok"``.
+    """
+    if isinstance(patience, bool) or not isinstance(patience, int) or patience < 1:
+        raise ValueError("patience must be a positive integer")
+    if not math.isfinite(float(min_delta)) or float(min_delta) < 0:
+        raise ValueError("min_delta must be a non-negative number")
+    min_delta = float(min_delta)
+    tv = [float(v) for v in train_values]
+    vv = [float(v) for v in val_values]
+    if not vv:
+        raise ValueError("val_values must be non-empty")
+    ts = list(range(len(tv))) if train_steps is None else list(train_steps)
+    vs = list(range(len(vv))) if val_steps is None else list(val_steps)
+    if len(ts) != len(tv):
+        raise ValueError("train_steps and train_values must have the same length")
+    if len(vs) != len(vv):
+        raise ValueError("val_steps and val_values must have the same length")
+
+    train_pairs = sorted(
+        ((float(st), v) for st, v in zip(ts, tv) if st is not None and math.isfinite(v)),
+        key=lambda p: p[0],
+    )
+    val_pairs = sorted(
+        ((st, v) for st, v in zip(vs, vv) if st is not None and math.isfinite(v)),
+        key=lambda p: float(p[0]),
+    )
+    sign = -1.0 if maximize else 1.0  # sign * value: lower is better
+    points: List[Dict[str, Any]] = []
+    t_idx, last_train = 0, None
+    for step, val in val_pairs:
+        while t_idx < len(train_pairs) and train_pairs[t_idx][0] <= float(step):
+            last_train = train_pairs[t_idx][1]
+            t_idx += 1
+        if last_train is None:
+            continue
+        points.append({"step": step, "train": last_train, "val": val, "gap": sign * (val - last_train)})
+    if not points:
+        raise ValueError("no validation point has a preceding training value")
+
+    def score(value: float) -> float:
+        return sign * value
+
+    best_i = 0
+    for i in range(1, len(points)):
+        if score(points[i]["val"]) < score(points[best_i]["val"]) - min_delta:
+            best_i = i
+    best = points[best_i]
+    onset = None
+    run = 0
+    for i in range(best_i + 1, len(points)):
+        if score(points[i]["val"]) > score(best["val"]) + min_delta:
+            run += 1
+            if run >= patience:
+                start = i - patience + 1
+                if score(points[i]["train"]) < score(best["train"]):
+                    onset = points[start]["step"]
+                    break
+        else:
+            run = 0
+    final_gap = points[-1]["gap"]
+    if onset is not None:
+        status = "overfitting"
+    elif best_i == 0 and len(points) > 1:
+        status = "stalled"
+    else:
+        status = "ok"
+    return {
+        "maximize": maximize,
+        "patience": patience,
+        "min_delta": min_delta,
+        "n_points": len(points),
+        "points": points,
+        "best_val_step": best["step"],
+        "best_val": best["val"],
+        "train_at_best": best["train"],
+        "gap_at_best": best["gap"],
+        "final_gap": final_gap,
+        "gap_growth": final_gap - best["gap"],
+        "overfit_onset_step": onset,
+        "points_after_best": len(points) - 1 - best_i,
+        "status": status,
+    }

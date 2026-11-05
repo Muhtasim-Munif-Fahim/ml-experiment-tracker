@@ -386,6 +386,23 @@ GET /runs/{id}/instability?metric=loss&window=5&spike_threshold=6
 GET /experiments/{id}/instability?metric=val_accuracy&maximize=true   # runs ranked diverged > unstable > stable
 ```
 
+## Overfitting onset and generalization gap
+
+`detect_overfitting` pairs each validation point with the latest training value logged at or before its step and tracks the generalization gap (`val - train` for a loss, `train - val` for a score; positive = validation worse). Overfitting starts at the first point after the best validation value that opens a run of `patience` points worse than the best by more than `min_delta` while the training metric keeps improving. Status is `overfitting`, `stalled` (validation never beat its first value) or `ok`.
+
+```python
+from src.models import detect_overfitting
+
+train = [2.0, 1.5, 1.1, 0.8, 0.6, 0.45, 0.35, 0.28]
+val   = [2.1, 1.6, 1.3, 1.15, 1.2, 1.3, 1.45, 1.6]
+r = detect_overfitting(train, val, patience=3)
+r["best_val_step"], r["overfit_onset_step"], r["status"]   # (3, 4, 'overfitting')
+```
+
+```
+GET /runs/{id}/overfitting?train_metric=train_loss&val_metric=val_loss&patience=3
+```
+
 ## Project Structure
 
 ```

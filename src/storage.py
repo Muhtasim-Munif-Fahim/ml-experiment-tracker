@@ -1899,6 +1899,48 @@ class LocalStorageBackend:
         result["metric_name"] = metric_name
         return result
 
+    def run_overfitting_report(
+        self,
+        run_id: str,
+        train_metric: str,
+        val_metric: str,
+        *,
+        maximize: bool = False,
+        patience: int = 3,
+        min_delta: float = 0.0,
+    ) -> dict:
+        """Generalization gap and overfitting onset for one run.
+
+        See :func:`src.models.detect_overfitting`. Only stepped, finite
+        observations are used (the last value wins for a repeated step).
+        Raises ``KeyError`` for an unknown run and ``ValueError`` when a
+        metric has no stepped values.
+        """
+        from .models import _stepped_history, detect_overfitting
+
+        run = self.load_run(run_id)
+        if run is None:
+            raise KeyError(f"run not found: {run_id}")
+        train = _stepped_history(run, train_metric)
+        val = _stepped_history(run, val_metric)
+        if not train:
+            raise ValueError(f"no recorded values for metric: {train_metric}")
+        if not val:
+            raise ValueError(f"no recorded values for metric: {val_metric}")
+        result = detect_overfitting(
+            [v for _, v in train],
+            [v for _, v in val],
+            train_steps=[s for s, _ in train],
+            val_steps=[s for s, _ in val],
+            maximize=maximize,
+            patience=patience,
+            min_delta=min_delta,
+        )
+        result["run_id"] = run_id
+        result["train_metric"] = train_metric
+        result["val_metric"] = val_metric
+        return result
+
     def experiment_instability_report(
         self,
         exp_id: str,

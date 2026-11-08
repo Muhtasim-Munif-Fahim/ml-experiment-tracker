@@ -477,6 +477,25 @@ def experiment_best_so_far(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/experiments/{exp_id}/expected-max", response_model=dict)
+def experiment_expected_max(
+    exp_id: str,
+    metric: str = Query(...),
+    maximize: bool = True,
+    group_by: Optional[str] = None,
+    max_budget: Optional[int] = Query(None, ge=1),
+):
+    """Expected best metric after n trials, optionally per param group (Dodge et al. 2019)."""
+    try:
+        return storage.experiment_expected_max(
+            exp_id, metric, maximize=maximize, group_by=group_by, max_budget=max_budget
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/friedman")
 def experiment_friedman_comparison(
     exp_id: str,

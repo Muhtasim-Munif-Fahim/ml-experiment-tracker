@@ -18,6 +18,7 @@ A lightweight experiment tracking and model registry system for ML workflows.
 - Per-step metric history export (CSV and JSON), alongside the wide pivot CSV
 - Seed-aggregated run groups: mean ± Student-t CI per configuration, with a Welch t-test against the best group
 - Best-so-far / simple-regret curves for sweep progress over time
+- Expected validation performance vs. tuning budget (Dodge et al. "Show Your Work"), per param group with leader crossovers
 - Learning-curve extrapolation (pow3 / exp3 saturating fits) with predicted final metric, asymptote and early-termination hints for runs unlikely to beat the incumbent
 - Successive-halving replay of logged curves: which runs SHA/ASHA would stop at each rung, the compute saved, and whether the best run would have survived
 - Friedman rank test with Iman-Davenport F and Nemenyi critical difference for comparing configurations across matched seeds / datasets / folds
@@ -401,6 +402,22 @@ r["best_val_step"], r["overfit_onset_step"], r["status"]   # (3, 4, 'overfitting
 
 ```
 GET /runs/{id}/overfitting?train_metric=train_loss&val_metric=val_loss&patience=3
+```
+
+## Expected max performance vs. tuning budget
+
+Reporting only the best run hides how much tuning it took. `expected_max_performance` (Dodge et al., EMNLP 2019) treats each run's latest metric value as one draw from the search distribution and reports the expected best value after `n` trials, `sum_i v_(i) [(i/N)^n - ((i-1)/N)^n]`, along with its standard deviation and a clipped `mean ± std` band for `n = 1 .. max_budget`. With `group_by` you get one curve per param value. `leader_by_budget` and `crossovers` show which configuration family wins at each budget. Budgets beyond a group's run count are marked `extrapolated`.
+
+```python
+from src.models import expected_max_performance
+
+r = expected_max_performance(runs, "val_acc", group_by="model")
+[(g["group"], g["curve"][0]["expected_best"], g["curve"][-1]["expected_best"]) for g in r["groups"]]
+r["crossovers"]   # e.g. [{'budget': 4, 'from': 'logreg', 'to': 'bert'}]
+```
+
+```
+GET /experiments/{id}/expected-max?metric=val_acc&group_by=model&max_budget=20
 ```
 
 ## Project Structure

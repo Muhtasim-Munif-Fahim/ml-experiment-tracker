@@ -3212,3 +3212,142 @@ def detect_overfitting(
         "points_after_best": len(points) - 1 - best_i,
         "status": status,
     }
+
+
+def _expected_max_curve(values: Sequence[float], budgets: Sequence[int], maximize: bool) -> List[dict]:
+    """Expected best-of-``n`` (with replacement) from an empirical sample.
+
+    For ascending order statistics ``v_(1) <= ... <= v_(N)``,
+    ``P(max of n draws = v_(i)) = (i/N)^n - ((i-1)/N)^n`` (Dodge et al., 2019).
+    Minimization is handled by negating values.
+    """
+    sign = 1.0 if maximize else -1.0
+    ordered = sorted(sign * v for v in values)
+    N = len(ordered)
+    rows: List[dict] = []
+    for n in budgets:
+        mean = second = 0.0
+        for i, v in enumerate(ordered, start=1):
+            p = (i / N) ** n - ((i - 1) / N) ** n
+            mean += p * v
+            second += p * v * v
+        var = max(second - mean * mean, 0.0)
+        std = math.sqrt(var)
+        lo = max(mean - std, ordered[0])
+        hi = min(mean + std, ordered[-1])
+        expected = sign * mean
+        band = sorted((sign * lo, sign * hi))
+        rows.append(
+            {
+                "budget": int(n),
+                "expected_best": expected,
+                "std": std,
+                "lower": band[0],
+                "upper": band[1],
+            }
+        )
+    return rows
+
+
+def expected_max_performance(
+    runs: Sequence[Any],
+    metric_name: str,
+    *,
+    maximize: bool = True,
+    group_by: Optional[str] = None,
+    max_budget: Optional[int] = None,
+) -> dict:
+    """Expected validation performance as a function of the tuning budget.
+
+    Following Dodge et al. (EMNLP 2019, "Show Your Work"), the latest
+    ``metric_name`` value of every run is treated as one draw from the
+    hyperparameter search distribution, and the expected best value after
+    ``n`` trials (sampling with replacement from the empirical distribution)
+    is reported for ``n = 1 .. max_budget`` together with its standard
+    deviation and a ``mean ± std`` band clipped to the observed range.
+
+    With ``group_by`` (a flattened param name, e.g. ``"model"`` or
+    ``"optimizer.name"``) one curve is built per group value so that
+    configurations / model families can be compared fairly at equal budget.
+    ``crossovers`` lists the budgets at which the leading group changes, and
+    ``leader_by_budget`` the leading group at each budget — a model that wins
+    with 50 trials may lose with 5.
+
+    ``max_budget`` defaults to the largest group size.
+    """
+    if not metric_name:
+        raise ValueError("metric_name is required")
+    if max_budget is not None and (isinstance(max_budget, bool) or int(max_budget) < 1):
+        raise ValueError("max_budget must be a positive integer")
+
+    groups: Dict[str, List[float]] = {}
+    for run in runs:
+        view = run.to_dict() if hasattr(run, "to_dict") else dict(run)
+        values = [
+            m.get("value")
+            for m in view.get("metrics", []) or []
+            if m.get("name") == metric_name and m.get("value") is not None
+        ]
+        values = [float(v) for v in values if math.isfinite(float(v))]
+        if not values:
+            continue
+        if group_by:
+            params = flatten_params(view.get("params") or {})
+            if group_by not in params:
+                continue
+            key = str(params[group_by])
+        else:
+            key = "all"
+        groups.setdefault(key, []).append(values[-1])
+
+    if not groups:
+        return {
+            "metric_name": metric_name,
+            "maximize": bool(maximize),
+            "group_by": group_by,
+            "run_count": 0,
+            "groups": [],
+            "leader_by_budget": [],
+            "crossovers": [],
+        }
+
+    largest = max(len(v) for v in groups.values())
+    budget_cap = int(max_budget) if max_budget is not None else largest
+    budgets = list(range(1, budget_cap + 1))
+    group_rows = []
+    for key in sorted(groups):
+        vals = groups[key]
+        curve = _expected_max_curve(vals, budgets, maximize)
+        for point in curve:
+            point["extrapolated"] = point["budget"] > len(vals)
+        group_rows.append(
+            {
+                "group": key,
+                "run_count": len(vals),
+                "observed_best": max(vals) if maximize else min(vals),
+                "mean": sum(vals) / len(vals),
+                "curve": curve,
+            }
+        )
+
+    leaders: List[dict] = []
+    crossovers: List[dict] = []
+    previous = None
+    for idx, n in enumerate(budgets):
+        scored = [(g["curve"][idx]["expected_best"], g["group"]) for g in group_rows]
+        best_val = max(s for s, _ in scored) if maximize else min(s for s, _ in scored)
+        leader = next(gname for s, gname in scored if s == best_val)
+        leaders.append({"budget": n, "group": leader, "expected_best": best_val})
+        if previous is not None and leader != previous:
+            crossovers.append({"budget": n, "from": previous, "to": leader})
+        previous = leader
+
+    return {
+        "metric_name": metric_name,
+        "maximize": bool(maximize),
+        "group_by": group_by,
+        "run_count": sum(len(v) for v in groups.values()),
+        "groups": group_rows,
+        "leader_by_budget": leaders,
+        "crossovers": crossovers,
+    }

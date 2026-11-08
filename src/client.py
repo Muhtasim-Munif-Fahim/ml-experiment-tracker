@@ -323,6 +323,22 @@ class ExperimentTrackerClient:
             params={"metric": metric_name, "maximize": maximize},
         )
 
+    def expected_max_performance(
+        self,
+        exp_id: str,
+        metric_name: str,
+        maximize: bool = True,
+        group_by: Optional[str] = None,
+        max_budget: Optional[int] = None,
+    ) -> dict:
+        """Expected best metric vs. number of tuning trials (optionally per param group)."""
+        params: Dict[str, Any] = {"metric": metric_name, "maximize": maximize}
+        if group_by is not None:
+            params["group_by"] = group_by
+        if max_budget is not None:
+            params["max_budget"] = max_budget
+        return self._request("GET", f"/experiments/{exp_id}/expected-max", params=params)
+
     def successive_halving(
         self,
         exp_id: str,

@@ -1171,6 +1171,28 @@ class LocalStorageBackend:
             maximize=maximize,
         )
 
+    def experiment_expected_max(
+        self,
+        experiment_id: str,
+        metric_name: str,
+        *,
+        maximize: bool = True,
+        group_by: Optional[str] = None,
+        max_budget: Optional[int] = None,
+    ) -> dict:
+        """Expected best metric vs. tuning budget (Dodge et al. 2019) for one experiment."""
+        from .models import expected_max_performance
+
+        if self.load_experiment(experiment_id) is None:
+            raise KeyError(f"experiment not found: {experiment_id}")
+        return expected_max_performance(
+            self.list_runs(experiment_id),
+            metric_name,
+            maximize=maximize,
+            group_by=group_by,
+            max_budget=max_budget,
+        )
+
     def experiment_successive_halving(
         self,
         experiment_id: str,

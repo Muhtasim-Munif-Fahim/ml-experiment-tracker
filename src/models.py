@@ -3351,3 +3351,76 @@ def expected_max_performance(
         "leader_by_budget": leaders,
         "crossovers": crossovers,
     }
+
+
+def _hv_minimize(points: List[List[float]], reference: List[float]) -> float:
+    """Exact hypervolume dominated by ``points`` (minimization) up to ``reference``.
+
+    Recursive slicing over the last objective (HSO): sort by the last
+    coordinate, and between consecutive cut levels add the (d-1)-dimensional
+    hypervolume of the points already swept times the slab thickness.
+    """
+    if not points:
+        return 0.0
+    dims = len(reference)
+    if dims == 1:
+        return max(0.0, reference[0] - min(p[0] for p in points))
+    pts = sorted(points, key=lambda p: p[-1])
+    total = 0.0
+    for i, point in enumerate(pts):
+        upper = pts[i + 1][-1] if i + 1 < len(pts) else reference[-1]
+        depth = upper - point[-1]
+        if depth <= 0:
+            continue
+        total += depth * _hv_minimize([p[:-1] for p in pts[: i + 1]], reference[:-1])
+    return total
+
+
+def pareto_hypervolume(
+    points: Sequence[Sequence[float]],
+    reference: Sequence[float],
+    maximize: Optional[Sequence[bool]] = None,
+) -> Dict[str, Any]:
+    """Hypervolume indicator of a point set and each point's exclusive contribution.
+
+    The hypervolume (Zitzler & Thiele 1998) is the volume of objective space
+    dominated by the set and bounded by ``reference``: larger is better, and
+    it is the only unary quality indicator that is strictly monotone in
+    Pareto dominance, so it can compare whole fronts (e.g. two sweeps).
+
+    ``maximize[k]`` says whether objective ``k`` is maximized (default: all
+    True). The reference must be *worse* than the points worth counting on
+    every objective; points that do not strictly beat it on all objectives
+    add nothing. A point's exclusive contribution is
+    ``HV(all) - HV(all without it)``: zero for dominated points, and largest
+    for front members that cover a region no other run reaches.
+
+    Returns ``{"hypervolume", "contributions"}`` with contributions in the
+    order of ``points``.
+    """
+    pts = [[float(v) for v in p] for p in points]
+    ref = [float(v) for v in reference]
+    if not ref:
+        raise ValueError("reference must have at least one objective")
+    if any(len(p) != len(ref) for p in pts):
+        raise ValueError("every point must have one value per objective")
+    if maximize is None:
+        maximize = [True] * len(ref)
+    if len(maximize) != len(ref):
+        raise ValueError("maximize must have one flag per objective")
+    if any(not math.isfinite(v) for p in pts for v in p) or any(not math.isfinite(v) for v in ref):
+        raise ValueError("points and reference must be finite")
+    signs = [-1.0 if m else 1.0 for m in maximize]
+    ref_min = [s * r for s, r in zip(signs, ref)]
+    flipped = [[s * v for s, v in zip(signs, p)] for p in pts]
+    useful = [all(v < r for v, r in zip(p, ref_min)) for p in flipped]
+    kept = [p for p, ok in zip(flipped, useful) if ok]
+    total = _hv_minimize(kept, ref_min)
+    contributions: List[float] = []
+    for i, p in enumerate(flipped):
+        if not useful[i]:
+            contributions.append(0.0)
+            continue
+        others = [q for j, q in enumerate(flipped) if j != i and useful[j]]
+        contributions.append(max(0.0, total - _hv_minimize(others, ref_min)))
+    return {"hypervolume": total, "contributions": contributions}

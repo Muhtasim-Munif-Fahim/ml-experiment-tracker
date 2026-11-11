@@ -420,6 +420,29 @@ r["crossovers"]   # e.g. [{'budget': 4, 'from': 'logreg', 'to': 'bert'}]
 GET /experiments/{id}/expected-max?metric=val_acc&group_by=model&max_budget=20
 ```
 
+## Pareto-front hypervolume
+
+The Pareto front lists the runs worth choosing between; the hypervolume
+indicator (Zitzler & Thiele 1998) measures how much of the objective space
+they cover together, bounded by a reference point, so whole experiments or
+sweeps can be compared with one number. Each front run's exclusive
+contribution (`HV(all) - HV(all without it)`) shows which trade-offs are
+irreplaceable. Exact for any number of objectives (HSO slicing); the default
+reference is the worst observed value per objective padded by 10% of its
+range, or pass `"reference"` per objective.
+
+```python
+storage.experiment_pareto_hypervolume(exp_id, [
+    {"metric": "accuracy", "maximize": True, "reference": 0.7},
+    {"metric": "latency", "maximize": False, "reference": 120.0},
+])
+# {"hypervolume": 20.0, "front": [{"name": ..., "contribution": ..., "contribution_share": ...}, ...]}
+```
+
+HTTP: `POST /experiments/{id}/pareto/hypervolume` (body: objectives, query
+`reference_margin`); client: `client.experiment_pareto_hypervolume(...)`;
+pure function: `src.models.pareto_hypervolume(points, reference, maximize)`.
+
 ## Project Structure
 
 ```

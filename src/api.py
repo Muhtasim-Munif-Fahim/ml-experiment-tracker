@@ -1464,6 +1464,23 @@ def experiment_pareto_front(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/experiments/{exp_id}/pareto/hypervolume", response_model=dict)
+def experiment_pareto_hypervolume(
+    exp_id: str,
+    objectives: List[dict] = Body(...),
+    reference_margin: float = Query(0.1, ge=0),
+):
+    """Hypervolume of the Pareto front and each front run's exclusive contribution."""
+    try:
+        return storage.experiment_pareto_hypervolume(
+            exp_id, objectives, reference_margin=reference_margin
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/experiments/{exp_id}/leaderboard.csv")
 def run_leaderboard_csv(
     exp_id: str,

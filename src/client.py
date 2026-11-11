@@ -728,6 +728,21 @@ class ExperimentTrackerClient:
             json=objectives,
         )
 
+    def experiment_pareto_hypervolume(
+        self,
+        exp_id: str,
+        objectives: List[dict],
+        reference_margin: float = 0.1,
+    ) -> dict:
+        """Hypervolume of the Pareto front and each front run's exclusive contribution."""
+
+        return self._request(
+            "POST",
+            f"/experiments/{exp_id}/pareto/hypervolume",
+            params={"reference_margin": reference_margin},
+            json=objectives,
+        )
+
     def run_leaderboard_csv(
         self,
         exp_id: str,

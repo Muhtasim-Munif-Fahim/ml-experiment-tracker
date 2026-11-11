@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import os
 import shutil
 import json
@@ -27,6 +28,7 @@ from .models import (
     group_runs_by_params,
     metric_trend,
     parameter_importance,
+    pareto_hypervolume,
     pearson_correlation,
     standardize_series,
     write_run_comparison_report,
@@ -2121,6 +2123,78 @@ class LocalStorageBackend:
         rest = [entry for entry in results if entry["rank"] > 0]
         rest.sort(key=lambda entry: (entry["rank"], -entry["dominated_count"], str(entry["run_id"])))
         return front + rest
+
+    def experiment_pareto_hypervolume(
+        self,
+        exp_id: str,
+        objectives: List[dict],
+        *,
+        reference_margin: float = 0.1,
+    ) -> dict:
+        """Hypervolume of an experiment's Pareto front and each run's share of it.
+
+        The Pareto front says which runs are worth choosing between; the
+        hypervolume says how much of the objective space they cover together,
+        so two experiments (or one experiment before and after a sweep) can be
+        compared with one number, and each front member's *exclusive
+        contribution* shows which runs are irreplaceable trade-offs and which
+        sit in a crowded part of the front.
+
+        ``objectives`` uses the ``experiment_pareto_front`` format, plus an
+        optional ``"reference"`` value per objective. Without one the
+        reference is the worst value seen among the comparable runs, pushed
+        out by ``reference_margin`` times that objective's range (or times
+        ``max(1, |value|)`` when every run ties), so extreme front members
+        still contribute volume.
+
+        Returns ``{"hypervolume", "reference", "objectives", "n_runs",
+        "front"}`` where ``front`` lists ``run_id``, ``name``, ``values``,
+        ``contribution`` and ``contribution_share`` (contribution / total)
+        sorted by contribution, largest first.
+        """
+        if reference_margin < 0 or not math.isfinite(reference_margin):
+            raise ValueError("reference_margin must be a non-negative finite number")
+        entries = self.experiment_pareto_front(exp_id, objectives, include_dominated=True)
+        parsed = [(str(o.get("metric")), bool(o.get("maximize", True)), o.get("reference")) for o in objectives]
+        reference: Dict[str, float] = {}
+        for name, maximize, explicit in parsed:
+            if explicit is not None:
+                reference[name] = float(explicit)
+                continue
+            values = [entry["values"][name] for entry in entries]
+            if not values:
+                raise ValueError("no run has a value for every objective")
+            worst = min(values) if maximize else max(values)
+            spread = max(values) - min(values)
+            pad = reference_margin * (spread if spread > 0 else max(1.0, abs(worst)))
+            reference[name] = worst - pad if maximize else worst + pad
+        front = [entry for entry in entries if entry["rank"] == 0]
+        names = [name for name, _m, _r in parsed]
+        result = pareto_hypervolume(
+            [[entry["values"][name] for name in names] for entry in front],
+            [reference[name] for name in names],
+            [maximize for _n, maximize, _r in parsed],
+        )
+        total = result["hypervolume"]
+        rows = []
+        for entry, contribution in zip(front, result["contributions"]):
+            rows.append(
+                {
+                    "run_id": entry["run_id"],
+                    "name": entry["name"],
+                    "values": entry["values"],
+                    "contribution": contribution,
+                    "contribution_share": contribution / total if total > 0 else 0.0,
+                }
+            )
+        rows.sort(key=lambda row: (-row["contribution"], str(row["run_id"])))
+        return {
+            "hypervolume": total,
+            "reference": reference,
+            "objectives": [{"metric": n, "maximize": m} for n, m, _r in parsed],
+            "n_runs": len(entries),
+            "front": rows,
+        }
 
 
 class S3StorageBackend:
